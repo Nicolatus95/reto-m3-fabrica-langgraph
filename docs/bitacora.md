@@ -391,6 +391,52 @@ Registro de decisiones, iteraciones, hallazgos y resultados. Las capturas citada
   implementador = desarrollador, tester = diseñador de pruebas + automatizador, reviewer =
   revisor. Total: 9 agentes con rol propio (rúbrica: "5+ agentes con roles bien definidos").
 
+- **Hallazgo (revisión contra el plan del reto):** el reto pide que el flujo entregue "código +
+  pruebas + documentación". Hoy el grafo produce código, pruebas y `reporte.md`, pero ningún nodo
+  genera documentación de la historia. Es el único hueco que justificaría un agente más
+  (documentador). **Decisión:** se agrega antes de la corrida real, porque la corrida es la
+  evidencia principal. Nodo `documentar` (Haiku, sin herramientas) entre `revisar` y `reporte`. El
+  código decide qué recibe, el modelo devuelve un contrato `Documentacion`, el código verifica que
+  cada endpoint aparezca en el diff y cada regla exista, y Python escribe el markdown. Así, la
+  documentación que afirma algo queda respaldada por el código.
+
+- **Revisión del plan del nodo `documentar`.** Aceptado: reutiliza el revisor (los mismos
+  delimitadores, el mismo diff y el mismo límite), con saneado de markdown, HTML y enlaces, texto de
+  las reglas tomado del archivo y no del modelo, y la aclaración de qué partes verifica el código.
+  **Hallazgo:** la "limitación aceptada" de las rutas no es un caso raro, es el caso normal en
+  esta app. El prefijo `/api` está en `main.py` y `/empleados` en el router, así que una ruta
+  correcta como `/api/empleados/{id}/jefe` nunca aparece literal en el diff de HU-04, y la
+  evidencia principal saldría marcada «(no verificado)». **Ajuste:** verificar contra el OpenAPI de
+  la app ya desplegada (`/openapi.json`; el nodo corre después de E2E), con método y ruta y los
+  parámetros `{...}` normalizados. Si la app no responde, se usa el diff como respaldo.
+- **Lección:** antes de aceptar una limitación, hay que comprobarla contra el caso real. Lo que en
+  abstracto parecía un borde era, en esta app, la ruta de siempre. Además, la fuente de verdad de
+  "qué endpoints existen" es la app en ejecución, no el texto del diff.
+
+## Fase 2 · Renombre (`1152166`) y nodo `documentar` (`95e620b`)
+- `1152166`: la categoría `correctitud` (un calco del inglés que no existe en español) pasa a
+  `corrección`.
+- `95e620b`: nodo `documentar` (Haiku, sin herramientas) entre `revisar` (aprobada) y `reporte`.
+  - El código decide qué recibe el modelo: el diff desde la base, las reglas y los criterios, entre
+    delimitadores aleatorios.
+  - El modelo devuelve un contrato `Documentacion` (`extra="forbid"`); los textos se sanean y
+    Python arma `salida/HU-xx/documentacion.md`.
+  - Los endpoints se verifican contra el `/openapi.json` de la app desplegada, con los parámetros
+    normalizados y con o sin `/api`. Si la app no responde, se verifican contra el diff y el
+    documento lo dice.
+  - Las reglas se verifican contra `reglas_negocio.md`, y su texto lo pone el código.
+  - El reporte solo enlaza el documento si esta corrida lo escribió (`documentacion_ok`): así no
+    enlaza un archivo viejo.
+- Resultado: **153 pruebas** en verde y ruff limpio. En el ensayo, `lista` termina LISTA con
+  documentación y `documentar_invalido` termina en ESCALAR. `docs/grafo.mmd` se regeneró
+  (18 nodos).
+- Límites aceptados: con el respaldo por diff no se verifica el método; la verificación por OpenAPI
+  depende de que la app esté en `localhost:8000`, así que antes de la corrida hay que comprobar que
+  no hay otra copia de `app` levantada; no hubo llamada real ni app real (solo dobles).
+- Revisión externa del chat: sin hallazgos.
+- **Lección:** «verificado» debe decir contra qué. El documento nombra su fuente de verificación y
+  marca lo que no pudo verificar, en vez de descartarlo.
+
 ## Pendientes para el reto (anotados durante la clase)
 
 - Suite de red team con las evasiones del filtro textual (Paso 2) y comprobar qué capa detiene cada una.

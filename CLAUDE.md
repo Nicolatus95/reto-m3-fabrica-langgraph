@@ -33,3 +33,13 @@ es un subagente de Claude Code** y se usa con `claude auth login` (sin ANTHROPIC
 - No edites a mano lo que generan los agentes en `salida/` y `app/`: corrige al agente, no su resultado
 - Antes de cambiar más de un archivo, muestra un plan y espera aprobación; explica el porqué de cada
 cambio
+
+## Reto (después de fin-clase)
+- El orquestador es `flujos/fabrica.py` (LangGraph); llama a los skills con `claude -p` desde
+  `flujos/claude.py`, sin API key.
+- Cada nodo se juzga por su artefacto (existe, cambió y valida), nunca por `is_error`.
+- Cada llamada fija su modelo: tabla `MODELOS` en `flujos/fabrica.py`.
+- `--ensayo` y `tests/` prueban las rutas del grafo sin costo (dobles, sin modelo ni Docker).
+- `registros/` es solo para personas: ningún agente la lee (ver `hooks/roles.py`).
+- `docs/bitacora.md` registra decisiones e iteraciones; la mantiene Nicolas desde el chat de
+  planeación: no la edites.

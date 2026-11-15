@@ -10,6 +10,7 @@ cualquier cosa fuera de las carpetas permitidas (incluidos los trucos como `hist
 """
 import fnmatch
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -42,6 +43,8 @@ def permitida(ruta: str, patrones: list[str]) -> bool:
 
 def revisar(agente: str, herramienta: str, entrada: dict) -> None:
     rol = ROLES[agente]
+    if os.environ.get("DEFENSAS", "1") == "0" and herramienta not in ESCRITURA:
+        return    # sesión 4, solo en clase: sin defensas de lectura ni de terminal, para ver el ataque
     if herramienta in ESCRITURA:
         ruta = entrada.get("file_path") or entrada.get("notebook_path", "")
         if not permitida(ruta, rol.escribe):

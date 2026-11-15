@@ -17,7 +17,6 @@ es un subagente de Claude Code** y se usa con `claude auth login` (sin ANTHROPIC
 - `hooks/seguridad.py` — hook PreToolUse para todos: lectura confinada, secretos, terminal y auditoría
 - `validadores/` — contratos Pydantic y validadores deterministas (sin modelo)
 - `verificacion/` — verificaciones deterministas: app (2), despliegue y pruebas (3), e2e (4)
-- `.mcp.json` — **opcional**: conexión con PyCharm, solo en la máquina de la persona (no es parte de la fábrica)
 - `historias/`, `contexto/` — entradas; `salida/HU-xx/` — artefactos por historia
 - `app/` — la aplicación que generan los agentes
 - `spikes/` — comprobaciones sin modelo de cada paso (`comprobar_paso*.py`)

@@ -102,6 +102,7 @@ También puedes usar los scripts `spikes/comprobar_paso2.py`, `spikes/comprobar_
 - **`hooks/rol.py` compara `programas` por prefijo**, para que `.venv/Scripts/python -m pytest` (varias palabras) funcione en Windows.
 - **Dos arreglos de UTF-8 en `verificacion/`**: `comun.py` decodifica la salida de subprocesos (Docker) en UTF-8 y `__main__.py` imprime en UTF-8, porque Windows usa cp1252 y fallaba con `✓`.
 - **No se regeneró la app con HU-01 en el Paso 7**: habría borrado y rehecho `app/` con el modelo; el camino de seguridad se probó con HU-99.
+- **`ejemplos/` y el servidor MCP `directorio` de la sesión 3 no se implementaron**; `.mcp.json` (conexión local con PyCharm) queda fuera del repo y se quitaron los permisos `mcp__directorio__` sueltos.
 - **El ejemplo `grep` usa `BANDERA` y no el señuelo completo**, porque `hooks/seguridad.py` bloquea escribir ese texto en cualquier archivo, también en este README.
 
 ## Registro detallado

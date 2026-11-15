@@ -22,3 +22,4 @@ app/backend/datos/
 app/test-results/
 auditoria.jsonl
 salida/*/resultados.xml
+.mcp.json

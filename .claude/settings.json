@@ -24,9 +24,7 @@
       "Bash(docker *)",
       "Bash(curl *)",
       "Bash(sleep *)",
-      "Bash(.venv/Scripts/python -m pytest *)",
-      "mcp__directorio__buscar_empleados",
-      "mcp__directorio__consultar_empleado"
+      "Bash(.venv/Scripts/python -m pytest *)"
     ]
   },
   "hooks": {

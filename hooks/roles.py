@@ -51,7 +51,7 @@ ROLES = {
                       verifica="despliegue", max_intentos=2),
     "automatizador": Rol(lee=["contexto/*", "salida/*", "app/*"],
                          escribe=["app/tests/*"],
-                         programas={"cd", "ls", ".venv/Scripts/python -m pytest", "uv"},
+                         programas={"cd", "ls", ".venv/Scripts/python -m pytest"},
                          verifica="pruebas", max_intentos=2),
     # Sesión 4 · el filtro lee contenido NO confiable, por eso casi no tiene poder: solo lee historias/
     # y solo escribe su veredicto. El triage solo lee y escribe su diagnóstico: enruta, no corrige.

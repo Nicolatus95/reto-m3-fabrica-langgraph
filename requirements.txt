@@ -6,3 +6,5 @@ pytest
 pytest-playwright
 ruff
 bandit
+# dependencias del backend que genera la fábrica (FastAPI, SQLAlchemy, ...)
+-r app/backend/requirements.txt

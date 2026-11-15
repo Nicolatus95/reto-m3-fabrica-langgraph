@@ -103,6 +103,8 @@ También puedes usar los scripts `spikes/comprobar_paso2.py`, `spikes/comprobar_
 - **Dos arreglos de UTF-8 en `verificacion/`**: `comun.py` decodifica la salida de subprocesos (Docker) en UTF-8 y `__main__.py` imprime en UTF-8, porque Windows usa cp1252 y fallaba con `✓`.
 - **No se regeneró la app con HU-01 en el Paso 7**: habría borrado y rehecho `app/` con el modelo; el camino de seguridad se probó con HU-99.
 - **`ejemplos/` y el servidor MCP `directorio` de la sesión 3 no se implementaron**; `.mcp.json` (conexión local con PyCharm) queda fuera del repo y se quitaron los permisos `mcp__directorio__` sueltos.
+- **Mejoras propias de clase** (no están en la guía): `analista.md` prohíbe `Antecedentes:` (el validador cuenta por escenario); `arquitecto.md` obliga a inventariar `app/` con Read/Glob antes de planear; `verificacion/__init__.py` distingue una dependencia que falta de una verificación que no existe; `verificacion/comun.py` resuelve el programa con `shutil.which` (en Windows `npm` es `npm.cmd`).
+- **`requirements.txt` incluye `-r app/backend/requirements.txt`** (backend de la fábrica) y las herramientas del reto (`langgraph`, `ruff`, `bandit`); no lleva `mcp<2` porque no hay servidor MCP.
 - **El ejemplo `grep` usa `BANDERA` y no el señuelo completo**, porque `hooks/seguridad.py` bloquea escribir ese texto en cualquier archivo, también en este README.
 
 ## Registro detallado

@@ -126,6 +126,23 @@ Registro de decisiones, iteraciones, hallazgos y resultados. Las capturas citada
   Decisión: quitar `.mcp.json` y esos permisos sueltos (commit propio), y documentarlo como
   desviación de la guía en el README.
 
+### Comparación con la versión del profesor (`Repo final/M3B/sesion04`)
+- Reporte completo: `docs/comparacion-profesor.md`. 73 archivos: 9 idénticos, 18 solo con
+  diferencias de plataforma (CRLF, `.venv/Scripts` contra `.venv/bin`), 29 desviaciones ya
+  documentadas y 16 con otras diferencias.
+- Diferencias que se corrigieron:
+  - `requirements.txt` de la raíz no incluía las dependencias del backend (en un entorno limpio,
+    la verificación de la app fallaría). Se incluye `app/backend/requirements.txt` desde la raíz.
+  - `*.jsonl` en `.gitignore` también ignoraba la evidencia de auditoría en `docs/capturas/`; se
+    agregó una excepción.
+  - `roles.py` le daba `uv` al automatizador (el profesor no lo hace). Se quitó, por coherencia
+    con haber quitado `pip`/`uv` del `allow`.
+- Diferencias que se conservan, documentadas como mejoras propias de clase: reglas extra en
+  `analista.md` (no usar `Antecedentes:`) y `arquitecto.md` (inventariar `app/` antes de planear),
+  `verificacion/__init__.py` distingue una dependencia faltante de una verificación inexistente,
+  y `comun.py` resuelve `npm` con `shutil.which` en Windows.
+- El resto son diferencias cosméticas (líneas en blanco, formato del JSON, saltos de línea).
+
 ## Pendientes para el reto (anotados durante la clase)
 
 - Suite de red team con las evasiones del filtro textual (Paso 2) y comprobar qué capa detiene cada una.

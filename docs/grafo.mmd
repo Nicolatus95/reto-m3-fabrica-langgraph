@@ -1,0 +1,63 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	filtrar(filtrar)
+	analizar(analizar)
+	preguntas(preguntas)
+	disenar(disenar)
+	planificar(planificar)
+	aprobar_plan(aprobar_plan)
+	construir(construir)
+	desplegar(desplegar)
+	automatizar(automatizar)
+	listo(listo)
+	e2e(e2e)
+	corregir_codigo(corregir_codigo)
+	corregir_pruebas(corregir_pruebas)
+	corregir_despliegue(corregir_despliegue)
+	revisar(revisar)
+	reporte(reporte)
+	triage(triage)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> filtrar;
+	analizar -.-> preguntas;
+	analizar -.-> reporte;
+	aprobar_plan -.-> construir;
+	aprobar_plan -.-> planificar;
+	aprobar_plan -.-> reporte;
+	automatizar --> listo;
+	construir -.-> automatizar;
+	construir -.-> desplegar;
+	construir -.-> reporte;
+	corregir_codigo --> e2e;
+	corregir_despliegue --> e2e;
+	corregir_pruebas --> e2e;
+	desplegar --> listo;
+	disenar -.-> planificar;
+	disenar -.-> reporte;
+	e2e -.-> reporte;
+	e2e -.-> revisar;
+	e2e -.-> triage;
+	filtrar -.-> analizar;
+	filtrar -.-> reporte;
+	listo -.-> e2e;
+	listo -.-> reporte;
+	planificar -.-> aprobar_plan;
+	planificar -.-> reporte;
+	preguntas -.-> disenar;
+	preguntas -.-> reporte;
+	revisar -.-> corregir_codigo;
+	revisar -.-> reporte;
+	triage -.-> corregir_codigo;
+	triage -.-> corregir_despliegue;
+	triage -.-> corregir_pruebas;
+	triage -.-> reporte;
+	reporte --> __end__;
+	construir -.-> construir;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

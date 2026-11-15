@@ -76,6 +76,7 @@ class Estado(TypedDict, total=False):
     pruebas_ok: bool
     e2e_ok: bool
     log_e2e: str
+    log_correccion: str              # log de una corrección de código que no verificó o no se redesplegó
     ciclos: int                      # ciclos de corrección por e2e
     responsable: str
     instruccion: str                 # qué debe corregir el responsable (diagnóstico del triage u observaciones)
@@ -342,11 +343,18 @@ def nodo_triage(sv: Servicios, s: Estado) -> Command:
 
 
 def nodo_corregir_codigo(sv: Servicios, s: Estado) -> dict:
-    """Corrige el código: /construir con la instrucción del diagnóstico, y reconstruye los contenedores."""
+    """Corrige el código: /construir con la instrucción del diagnóstico; verifica la app y luego redespliega.
+
+    Si la app no verifica o el redespliegue falla se escala con el log: no se sigue a e2e a ciegas.
+    """
     hu = s["hu"]
-    respuesta = sv.ejecutar(f"/construir {hu} Corrige: {s['instruccion']}", modelo=MODELOS["construir"])
-    ok, _ = sv.verificar("redespliegue", hu)        # el código cambió: los contenedores tienen la versión vieja
-    return {"costo_usd": costo_de(respuesta), "bitacora": [f"Código corregido; redespliegue {'OK' if ok else 'FALLA'}"]}
+    costo = costo_de(sv.ejecutar(f"/construir {hu} Corrige: {s['instruccion']}", modelo=MODELOS["construir"]))
+    for paso in ("app", "redespliegue"):            # primero la app; el código cambió y los contenedores tienen la vieja
+        ok, log = sv.verificar(paso, hu)
+        if not ok:
+            return {"estado_final": ESCALAR, "log_correccion": log, "costo_usd": costo,
+                    "bitacora": [f"Código corregido, pero «{paso}» FALLA: ESCALAR"]}
+    return {"costo_usd": costo, "bitacora": ["Código corregido; app verificada y redespliegue OK"]}
 
 
 def nodo_corregir_pruebas(sv: Servicios, s: Estado) -> dict:
@@ -395,6 +403,8 @@ def nodo_reporte(sv: Servicios, s: Estado) -> dict:
     lineas += [f"- {json.dumps(e, ensure_ascii=False)}" for e in eventos] or ["- sin eventos"]
     lineas += ["", "## Bitácora", *[f"- {b}" for b in s.get("bitacora", [])],
                "", "## Última ejecución de pruebas", "```", s.get("log_e2e", "(no se ejecutaron)"), "```", ""]
+    if s.get("log_correccion"):
+        lineas += ["## Corrección de código que no pasó", "```", ultimas_lineas(s["log_correccion"]), "```", ""]
     (carpeta / "reporte.md").write_text("\n".join(lineas), encoding="utf-8")
     return {"estado_final": estado}
 
@@ -462,7 +472,8 @@ def construir_grafo(sv: Servicios, checkpointer) -> CompiledStateGraph:
     g.add_edge(["desplegar", "automatizar"], "listo")                   # espera a que terminen ambas ramas
     g.add_conditional_edges("listo", ruta_a("e2e"), ["e2e", "reporte"])
     g.add_conditional_edges("e2e", tras_e2e, ["revisar", "triage", "reporte"])
-    for correccion in ("corregir_codigo", "corregir_pruebas", "corregir_despliegue"):
+    g.add_conditional_edges("corregir_codigo", ruta_a("e2e"), ["e2e", "reporte"])   # no sigue a ciegas si falló
+    for correccion in ("corregir_pruebas", "corregir_despliegue"):
         g.add_edge(correccion, "e2e")                                   # el ciclo: corregir y volver a probar
     g.add_conditional_edges("revisar", tras_revisar, ["corregir_codigo", "reporte"])
     g.add_edge("reporte", END)
@@ -540,6 +551,8 @@ class Escenario:
     e2e_fallos: int = 0                      # veces que e2e falla antes de pasar (99 = nunca)
     responsable: str = "automatizador"       # a quién enruta el triage
     revisor_rechazos: int = 0                # veces que el revisor (fase 2) rechaza
+    app_falla_tras_correccion: bool = False  # la app no verifica después de corregir el código
+    redespliegue_falla: bool = False         # el redespliegue falla después de corregir el código
     sin_artefacto: frozenset[str] = frozenset()   # skills que «terminan» sin escribir su artefacto
 
 
@@ -636,6 +649,10 @@ class Ensayo:
         self.verificaciones.append(nombre)
         if nombre == "defensas":
             return True, "DEFENSAS ACTIVADAS" if self.esc.defensas else "DEFENSAS DESACTIVADAS (solo en clase)"
+        if nombre == "app" and self.esc.app_falla_tras_correccion and self._fallos["e2e"] > 0:
+            return False, "la app corregida no arranca: SyntaxError simulado"
+        if nombre == "redespliegue" and self.esc.redespliegue_falla:
+            return False, "docker compose up falló: puerto 8000 ocupado (simulado)"
         if nombre == "app" and self._fallos["app"] < self.esc.construir_fallos:
             self._fallos["app"] += 1
             return False, "el backend no arranca: ImportError simulado"

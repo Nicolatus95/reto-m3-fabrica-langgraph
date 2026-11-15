@@ -175,6 +175,27 @@ def test_dos_ciclos_sin_pasar_escalan(montar):
     assert len([p for p in construir if "Corrige:" in p]) == 2   # las otras dos corrigen con el diagnóstico
 
 
+def test_correccion_de_codigo_con_app_rota_escala(montar):
+    """Tras corregir el código la app no verifica: ESCALAR con el log, sin redesplegar ni seguir a e2e."""
+    m = montar(Escenario(e2e_fallos=1, responsable="desarrollador", app_falla_tras_correccion=True))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == ESCALAR
+    assert "redespliegue" not in m.ensayo.verificaciones        # la app se verifica ANTES de redesplegar
+    assert m.ensayo.verificaciones.count("e2e") == 1            # no volvió a probar a ciegas
+    assert "SyntaxError simulado" in (m.salida / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+
+
+def test_correccion_de_codigo_con_redespliegue_fallido_escala(montar):
+    """La app verifica pero el redespliegue falla: ESCALAR con el log, sin volver a e2e."""
+    m = montar(Escenario(e2e_fallos=1, responsable="desarrollador", redespliegue_falla=True))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == ESCALAR
+    verificaciones = m.ensayo.verificaciones
+    assert verificaciones.index("app", verificaciones.index("e2e")) < verificaciones.index("redespliegue")
+    assert verificaciones.count("e2e") == 1
+    assert "puerto 8000 ocupado" in (m.salida / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+
+
 def test_reanudar_un_thread_interrumpido(montar):
     """Se corta en la aprobación del plan; un grafo NUEVO reanuda desde el checkpoint sin repetir nada."""
     m1 = montar()

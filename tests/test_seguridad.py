@@ -104,6 +104,45 @@ def test_leer_registros_sale_con_exit_2_para_todos(entorno, herramienta, entrada
     assert r.returncode == 2 and "registros/ es solo para personas" in r.stderr
 
 
+@pytest.mark.parametrize("herramienta, entrada", [
+    ("Write", {"file_path": "registros/auditoria.jsonl", "content": "vacío"}),
+    ("Edit", {"file_path": "registros/auditoria.jsonl", "old_string": "a", "new_string": "b"}),
+    ("MultiEdit", {"file_path": "./registros/x.json", "edits": []}),
+    ("NotebookEdit", {"notebook_path": "registros/n.ipynb", "new_source": "x = 1"}),
+    ("Write", {"file_path": "app/../registros/seguridad.jsonl", "content": "x"}),
+])
+@pytest.mark.parametrize("agente", [None, "desarrollador"])
+def test_modificar_registros_sale_con_exit_2(entorno, herramienta, entrada, agente):
+    ejecutar, auditoria, tmp = entorno
+    r = ejecutar(herramienta, entrada, agente=agente)
+    assert r.returncode == 2 and "registros/ no se modifica desde un agente" in r.stderr
+    assert auditoria()[-1]["herramienta"] == herramienta           # el intento queda registrado
+
+
+def test_modificar_registros_con_defensas_0_pasa_pero_se_audita(entorno):
+    ejecutar, auditoria, _ = entorno
+    assert ejecutar("Write", {"file_path": "registros/x.txt", "content": "x"}, defensas="0").returncode == 0
+    assert auditoria()[-1]["defensas"] == "apagadas"
+
+
+def test_escribir_en_salida_pasa(entorno):
+    ejecutar, _, _ = entorno
+    assert ejecutar("Write", {"file_path": "salida/HU-04/x", "content": "x"}).returncode == 0
+
+
+def test_notebookedit_se_audita_y_revisa_el_senuelo(entorno):
+    ejecutar, auditoria, _ = entorno
+    assert ejecutar("NotebookEdit", {"notebook_path": "app/n.ipynb", "new_source": "x = 1"}).returncode == 0
+    assert auditoria()[-1]["herramienta"] == "NotebookEdit"
+    assert ejecutar("NotebookEdit", {"notebook_path": "app/n.ipynb", "new_source": SENUELO}).returncode == 2
+
+
+def test_notebookedit_esta_en_el_matcher_de_seguridad():
+    ajustes = json.loads((HOOK.parent.parent / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    matchers = [h["matcher"] for h in ajustes["hooks"]["PreToolUse"] if "seguridad.py" in h["hooks"][0]["command"]]
+    assert matchers and "NotebookEdit" in matchers[0].split("|")
+
+
 def test_la_ruta_absoluta_a_registros_tambien_se_bloquea(entorno):
     ejecutar, _, tmp = entorno
     assert ejecutar("Read", {"file_path": str(tmp / "registros" / "seguridad.jsonl")}).returncode == 2

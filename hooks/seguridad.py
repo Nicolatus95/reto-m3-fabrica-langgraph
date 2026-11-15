@@ -4,7 +4,8 @@ La historia de usuario es contenido NO confiable: puede traer instrucciones esco
 (inyección de prompt, ver historias/HU-99-envenenada.md). Estas defensas no dependen de que el modelo
 «se dé cuenta»: son código que se ejecuta antes de cada herramienta.
 
-1. Lectura confinada: nada fuera del proyecto, ningún archivo con secretos y nada dentro de registros/.
+1. Lectura confinada: nada fuera del proyecto, ningún archivo con secretos y nada dentro de registros/
+   (que tampoco se escribe ni se edita desde un agente: integridad del registro).
 2. Terminal: sin sustitución de comandos, sin mencionar secretos ni variables de entorno y sin nombrar registros/.
 3. Escritura: ningún archivo puede contener el señuelo de secretos_demo.txt (prevención de fuga).
 4. Auditoría: cada herramienta queda registrada en registros/auditoria.jsonl, SIEMPRE, incluso con DEFENSAS=0
@@ -78,8 +79,12 @@ def revisar(herramienta: str, entrada: dict) -> None:
         if menciona_registros(comando):
             bloquear("registros/ es solo para personas")
 
-    elif herramienta in ("Write", "Edit", "MultiEdit"):
-        contenido = entrada.get("content") or entrada.get("new_string") or json.dumps(entrada.get("edits", ""))
+    elif herramienta in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
+        ruta = entrada.get("file_path") or entrada.get("notebook_path") or ""
+        if ruta and (RAIZ / ruta).resolve().is_relative_to(REGISTROS.resolve()):
+            bloquear("registros/ no se modifica desde un agente")     # integridad del registro
+        contenido = (entrada.get("content") or entrada.get("new_string") or entrada.get("new_source")
+                     or json.dumps(entrada.get("edits", "")))
         if SENUELO in contenido:
             bloquear("el contenido incluye datos de secretos_demo.txt (fuga de información)")
 

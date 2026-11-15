@@ -42,7 +42,7 @@ def ejecutar(prompt: str, *, modelo: str, esquema: dict | type[BaseModel] | None
     entorno = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}   # solo la sesión de `claude auth login`
     entorno.update(entorno_extra or {})
     try:
-        r = subprocess.run(comando, cwd=RAIZ, capture_output=True, text=True, encoding="utf-8",
+        r = subprocess.run(comando, check=False, cwd=RAIZ, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", env=entorno, timeout=timeout)
     except subprocess.TimeoutExpired:
         return _fallo(f"`claude -p` superó {timeout} s", -1)

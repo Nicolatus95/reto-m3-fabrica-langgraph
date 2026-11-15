@@ -1,4 +1,4 @@
-"""Sesión 1 · Contratos y validadores deterministas.
+"""Sesiones 1 y 4 · Contratos y validadores deterministas.
 
 En M3B los agentes son subagentes de Claude Code, pero la regla del curso no cambia:
 el modelo propone y el CÓDIGO decide si el resultado es válido. Estas funciones no usan
@@ -69,3 +69,27 @@ def validar_plan(texto: str, gherkin: str) -> list[str]:
     if len(ids) != len(set(ids)):
         problemas.append("Hay ids de caso repetidos.")
     return problemas
+
+
+# --- Sesión 4 · filtro de seguridad y triage ---------------------------------------
+class Veredicto(BaseModel):
+    """Lo que entrega el subagente filtro-seguridad: ¿la historia trae instrucciones para un agente?"""
+    sospechosa: bool
+    motivo: str
+
+
+class Diagnostico(BaseModel):
+    """Lo que entrega el subagente triage: quién debe corregir una prueba fallida y por qué."""
+    responsable: Literal["desarrollador", "automatizador", "despliegue"]
+    causa: str          # qué falló, en una o dos frases
+    criterio: str       # escenario de aceptación que se usa como referencia
+    instruccion: str    # qué debe corregir el responsable
+
+
+def validar_json(contrato: type[BaseModel], texto: str) -> list[str]:
+    try:
+        contrato.model_validate_json(texto)
+        return []
+    except ValidationError as e:
+        return ["El JSON no cumple el contrato: " + "; ".join(
+            f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors()[:5])]

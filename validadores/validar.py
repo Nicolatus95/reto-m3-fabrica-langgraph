@@ -3,12 +3,13 @@
 Uso:  python -m validadores.validar salida/HU-01/criterios.feature
       python -m validadores.validar salida/HU-01/casos_prueba.json
       python -m validadores.validar salida/HU-01/plan.md              (sesión 2)
+      python -m validadores.validar salida/HU-01/veredicto.json       (sesión 4)
 Código de salida 0 = válido; 1 = hay problemas (se imprimen).
 """
 import sys
 from pathlib import Path
 
-from validadores.contratos import validar_gherkin, validar_plan
+from validadores.contratos import Diagnostico, Veredicto, validar_gherkin, validar_json, validar_plan
 
 MAX_LINEAS_PLAN = 60                     # un plan que no cabe en una pantalla no se revisa de verdad
 
@@ -33,6 +34,10 @@ def problemas_de(ruta: Path) -> list[str] | None:
         return validar_plan(ruta.read_text(encoding="utf-8"), criterios.read_text(encoding="utf-8"))
     if ruta.name == "plan.md":
         return validar_plan_md(ruta.read_text(encoding="utf-8"))
+    if ruta.name == "veredicto.json":
+        return validar_json(Veredicto, ruta.read_text(encoding="utf-8"))
+    if ruta.name == "diagnostico.json":
+        return validar_json(Diagnostico, ruta.read_text(encoding="utf-8"))
     return None
 
 

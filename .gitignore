@@ -21,3 +21,4 @@ app/frontend/dist/
 app/backend/datos/
 app/test-results/
 auditoria.jsonl
+salida/*/resultados.xml

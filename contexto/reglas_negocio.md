@@ -13,6 +13,7 @@
 | fecha_ingreso | Obligatoria; no puede ser una fecha futura |
 | estado | «activo» al registrar; «baja» al dar de baja |
 | fecha_baja | Solo cuando el estado es «baja»; no puede ser anterior a la fecha de ingreso |
+| jefe_id | Opcional; id de otro empleado activo; se puede dejar vacío |
 | creado_en | Fecha y hora de registro, la asigna el sistema |
 
 ## Reglas
@@ -24,3 +25,8 @@
 5. Dar de baja no borra al empleado: cambia su estado a «baja», guarda la fecha de baja y sigue apareciendo en el directorio.
 6. Un empleado dado de baja no se puede editar. El intento responde 409 con el mensaje «No se puede editar a un empleado dado de baja».
 7. La aplicación no tiene inicio de sesión: está fuera del alcance de este módulo.
+8. Un empleado no puede ser su propio jefe. El intento responde 422 con el mensaje «Un empleado no puede ser su propio jefe».
+9. El jefe debe existir. Si no, responde 422 con el mensaje «El jefe indicado no existe».
+10. Un empleado dado de baja no puede ser jefe de nadie. El intento responde 409 con el mensaje «Un empleado dado de baja no puede ser jefe».
+11. No se permiten ciclos en la línea de reporte. El intento responde 422 con el mensaje «La asignación crearía un ciclo en la línea de reporte».
+12. Al dar de baja a un empleado que es jefe, sus subordinados quedan sin jefe.

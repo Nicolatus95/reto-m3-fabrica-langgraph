@@ -22,6 +22,7 @@ app/backend/datos/
 app/test-results/
 auditoria.jsonl
 salida/*/resultados.xml
+salida/fabrica.sqlite*
 .mcp.json
 # excepción: la evidencia de clase sí se versiona (va después de *.jsonl)
 !docs/capturas/*.jsonl

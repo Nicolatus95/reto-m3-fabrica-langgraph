@@ -13,6 +13,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 RAIZ = Path(__file__).resolve().parent.parent
+MAX_PROMPT_ARGUMENTO = 20_000     # caracteres; por encima el prompt se envía por stdin
 CAMPOS = ("result", "structured_output", "total_cost_usd", "duration_ms", "is_error")
 
 
@@ -37,13 +38,15 @@ def ejecutar(prompt: str, *, modelo: str, esquema: dict | type[BaseModel] | None
         comando += ["--json-schema", json.dumps(schema)]
     if herramientas is not None:
         comando += ["--tools", herramientas]
-    comando += ["--", prompt]                      # «--» corta las opciones variádicas (--tools) antes del prompt
+    por_stdin = len(prompt) > MAX_PROMPT_ARGUMENTO  # Windows limita la línea de comandos a ~32 KB: lo largo va por stdin
+    if not por_stdin:
+        comando += ["--", prompt]                  # «--» corta las opciones variádicas (--tools) antes del prompt
 
     entorno = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}   # solo la sesión de `claude auth login`
     entorno.update(entorno_extra or {})
     try:
         r = subprocess.run(comando, check=False, cwd=RAIZ, capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", env=entorno, timeout=timeout)
+                           errors="replace", env=entorno, timeout=timeout, input=prompt if por_stdin else None)
     except subprocess.TimeoutExpired:
         return _fallo(f"`claude -p` superó {timeout} s", -1)
     try:

@@ -15,7 +15,7 @@ MAX_LINEAS_PLAN = 60                     # un plan que no cabe en una pantalla n
 
 
 def validar_plan_md(texto: str) -> list[str]:
-    lineas = [l for l in texto.splitlines() if l.strip()]
+    lineas = [linea for linea in texto.splitlines() if linea.strip()]
     if len(lineas) < 3:
         return ["El plan está vacío o tiene menos de 3 líneas."]
     if len(lineas) > MAX_LINEAS_PLAN:

@@ -199,6 +199,91 @@ Registro de decisiones, iteraciones, hallazgos y resultados. Las capturas citada
      el desarrollador o el triage podrían leer la paráfrasis del ataque. Hay que mover el registro
      fuera del alcance de lectura de los agentes, y que el reporte no copie el `motivo`.
 
+## Fase 1.1 · Correcciones de la revisión externa
+- Hueco 1: `construir` exige que `app/` haya cambiado (huella de fechas de modificación de
+  `app/backend` y `app/frontend/src`). Si no cambió, cuenta como intento fallido (commit `29a67fc`).
+- Hueco 2: `corregir_codigo` verifica la app y después el redespliegue. Si alguno falla, escala con
+  el log en vez de seguir a E2E a ciegas (`495c7c9`).
+- Hueco 3: el `motivo` del veredicto vive solo en `registros/`, que está fuera de `salida/` e
+  ignorada por git. El estado, el checkpoint y el reporte solo llevan el evento y sus booleanos
+  (`1a73cb6`). Los veredictos de clase que tenían el `motivo` salieron de `salida/` (`c995054`).
+  `CLAUDE.md` ganó la sección "Reto" (`fdd1bd4`).
+- Resultado: 20 pruebas en `tests/`.
+- **Lección:** "juzgar por el artefacto" exige que el artefacto sea algo que el nodo produce en esta
+  corrida. Una verificación que ya pasaba antes del nodo no prueba que el nodo hizo su trabajo.
+
+## Fase 2 · Planeación y revisión previa (chat de planeación)
+- Estado real (15 de noviembre, 16:15): árbol limpio y `main` = `origin/main` = `c995054` según la
+  referencia local. Desde el chat no se pudo consultar GitHub (no hay credenciales).
+- **Hallazgo:** `registros/` solo está protegido de forma implícita. Ningún rol de `roles.py` la
+  incluye en `lee`, pero `rol.py` no restringe al agente principal y `seguridad.py` no la menciona:
+  el agente principal de un `claude -p` podría leer `registros/seguridad.jsonl`. Además,
+  `auditoria.jsonl` (las entradas de cada herramienta, que en un ataque pueden traer la carga) vive
+  en la raíz, al alcance de todos. Se corrige en la fase 2 (bloque B).
+- **Diseño del revisor:**
+  - Revisa solo lo que cambió en la corrida, y eso lo decide el código con git, no un agente.
+  - Primero va la capa estática (`ruff`, `bandit`); si encuentra algo, rechaza sin llamar al modelo.
+  - Después, un LLM sin herramientas, con salida estructurada y el código entre delimitadores
+    aleatorios.
+  - Sus observaciones están acotadas por el esquema, porque son un canal del revisor hacia el
+    desarrollador, que sí tiene herramientas.
+  - El código anula una aprobación que traiga observaciones de seguridad.
+- **Registro de auditoría:** se escribe siempre, antes del interruptor `DEFENSAS`, en una ruta fija.
+  Una ruta configurable por variable de entorno sería en sí misma una forma de evadirlo.
+- **Lección:** una lista de permitidos protege lo que no menciona solo para quien está sujeto a la
+  lista. Lo que deba ser inaccesible para todos se bloquea de forma explícita, en la capa que aplica
+  a todos.
+- **Línea base de la capa estática** (antes de la fase 2, sobre `app/backend`, que tiene el código
+  de HU-01 a HU-03):
+  - `bandit -ll` (Windows): **0 hallazgos** en 306 líneas. Captura: `r2-linea-base-bandit.png`.
+  - `ruff` (Windows, `.venv`): **14 hallazgos**, confirmado. Captura: `r2-linea-base-ruff.png`.
+    Corrido también desde el chat (ruff 0.17.5): 23 hallazgos. 9 son `EXE002`, un artefacto de los
+    permisos de archivo de la carpeta montada que no aparece en Windows. Los 14 reales son 6
+    `I001` (imports desordenados), 5 `B008` (los `Depends` de FastAPI, que es el patrón idiomático:
+    un falso positivo), 2 `F401` (imports sin usar en `esquemas.py` y `servicio_empleados.py`) y 1
+    `UP017`.
+  - **Hallazgo:** no hay configuración de ruff en el repo y `requirements.txt` no fija versiones.
+    Las reglas por defecto cambian entre versiones de ruff, así que la misma compuerta podría
+    aprobar en una máquina y rechazar en otra. **Decisión:** fijar las versiones de ruff y bandit y
+    declarar las reglas en una configuración del repo, con `B008` exceptuado para `Depends` y
+    `Query`.
+  - **Decisión:** HU-04 casi seguro tocará `routers/empleados.py`, que ya tiene hallazgos. Como no
+    se edita `app/` a mano, la compuerta compara antes contra después y solo cuentan los
+    hallazgos nuevos.
+  - **Iteración:** el primer `ruff --statistics` falló porque el comando quedó pegado dos veces en
+    la misma línea. Lección: un comando por línea al pegar en PowerShell.
+- **Plan de la constructora (fase 2), revisado en el chat.** Aportes suyos que se aceptan:
+  - El prompt viajaba como argumento y Windows limita la línea de comandos a ~32 KB, así que un
+    diff de 60 KB no cabría. Ahora, por encima de ~20 000 caracteres, el prompt se envía por stdin.
+  - Ruff 0.17.5 trae por defecto ~400 reglas, así que `ruff.toml` declara un conjunto explícito.
+  - Versiones fijadas: ruff 0.17.5 y bandit 1.9.4.
+  - Si la auditoría no puede escribirse con las defensas activas, el hook bloquea (exit 2): un
+    error normal (exit 1) dejaría pasar la herramienta.
+  - `aprobado=False` sin observaciones se trata como ESCALAR.
+- **Ajustes pedidos en la revisión:**
+  1. La base del diff es HEAD y el plan solo *documentaba* que `app/` debía estar limpio. Ahora el
+     grafo lo comprueba al arrancar y guarda el commit base en el estado: una precondición que se
+     verifica, no una nota.
+  2. No todo hallazgo estático bloquea. El desarrollador no puede correr ruff (no está en sus
+     `programas`), y un `I001` (orden de imports) gastaría el único ciclo de revisión en una
+     corrección completa. Bloquean `F`, `E9`, `B` y bandit; `I`, `UP`, `E4`, `E7` y `RUF100`
+     quedan como observaciones informativas.
+  3. Bloquear cualquier comando que contenga la palabra "registros" daría falsos positivos en un
+     dominio en español. Se bloquea por segmento de ruta, con pruebas de comandos legítimos que
+     deben pasar.
+  4. El `auditoria.jsonl` viejo de la raíz (46 KB, con entradas de la clase y de HU-99) seguía al
+     alcance de los agentes. Se mueve a `registros/` en vez de borrarse.
+  - Riesgo aceptado y documentado: la capa estática no analiza el front-end (JSX); ahí solo
+    revisa el LLM.
+- **Lección:** una limitación que se documenta pero no se verifica en el código es una regla que
+  depende de que alguien la recuerde. Si se puede comprobar, el código la comprueba.
+- **Orden dentro del bloque B:** los hooks del proyecto también protegen a la constructora. En cuanto
+  `seguridad.py` bloquea `registros/`, ningún Bash de Claude Code puede moverse a esa carpeta, así
+  que el `mv` del `auditoria.jsonl` viejo va antes de editar el hook. Desde ese momento, `registros/`
+  solo se inspecciona desde la terminal de Nicolas.
+- **Pendiente de decisión (HU-04):** propuesta de prohibir ciclos en la línea de reporte y de que,
+  al dar de baja a un jefe, sus subordinados queden sin jefe.
+
 ## Pendientes para el reto (anotados durante la clase)
 
 - Suite de red team con las evasiones del filtro textual (Paso 2) y comprobar qué capa detiene cada una.

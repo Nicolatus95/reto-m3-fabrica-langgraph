@@ -7,7 +7,7 @@ ningún modelo: reciben texto y devuelven la lista de problemas (vacía = válid
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 # --- Criterios de aceptación (agente 1, analista) -------------------------------
@@ -21,7 +21,7 @@ def preguntas_abiertas(gherkin: str) -> list[str]:
     if "# Preguntas abiertas" not in gherkin:
         return []
     bloque = gherkin.split("# Preguntas abiertas", 1)[1]
-    return [l.lstrip("# -").strip() for l in bloque.splitlines() if l.strip().lstrip("#").strip()]
+    return [linea.lstrip("# -").strip() for linea in bloque.splitlines() if linea.strip().lstrip("#").strip()]
 
 
 def validar_gherkin(texto: str) -> list[str]:
@@ -84,6 +84,23 @@ class Diagnostico(BaseModel):
     causa: str          # qué falló, en una o dos frases
     criterio: str       # escenario de aceptación que se usa como referencia
     instruccion: str    # qué debe corregir el responsable
+
+
+class Observacion(BaseModel):
+    """Una observación del revisor. Es un canal hacia un agente con herramientas: el esquema acota su forma."""
+    model_config = ConfigDict(extra="forbid")
+
+    archivo: str = Field(max_length=120)
+    categoria: Literal["seguridad", "correctitud", "regla_negocio", "estilo"]
+    detalle: str = Field(max_length=300)
+
+
+class Revision(BaseModel):
+    """Lo que entrega el revisor: ¿aprueba el código que cambió en la corrida?"""
+    model_config = ConfigDict(extra="forbid")
+
+    aprobado: bool
+    observaciones: list[Observacion] = Field(max_length=5)
 
 
 def validar_json(contrato: type[BaseModel], texto: str) -> list[str]:

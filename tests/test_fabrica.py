@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from flujos import fabrica
 from flujos.fabrica import (
     BLOQUEADA,
     DETENIDA,
@@ -19,10 +20,12 @@ from flujos.fabrica import (
     MODELOS,
     Ensayo,
     Escenario,
+    commit_base,
     construir_grafo,
     correr,
     estado_inicial,
     main,
+    precondicion_app,
     reanudar,
     responder_si,
 )
@@ -80,18 +83,18 @@ def prompts_de(m, skill: str) -> list[str]:
 
 # --- Las rutas del grafo ----------------------------------------------------------------------------
 def test_lista(montar):
-    """Camino feliz: todo pasa, queda LISTA, con reporte, costo, modelos fijos y la revisión (STUB) al final."""
+    """Camino feliz: todo pasa, queda LISTA, con reporte, costo, modelos fijos y la revisión al final."""
     m = montar()
     v = correr_fabrica(m)
     assert v["estado_final"] == LISTA
     reporte = (m.salida / "HU-01" / "reporte.md").read_text(encoding="utf-8")
-    assert "**Estado:** LISTA" in reporte and "revisor pendiente: fase 2" in reporte
+    assert "**Estado:** LISTA" in reporte and "Revisión: aprobada" in reporte
     assert m.ensayo.prompts[0].startswith("/filtrar") and v["costo_usd"] > 0
-    assert set(m.ensayo.modelos) <= set(MODELOS.values()) and dict(zip(m.ensayo.prompts, m.ensayo.modelos))[
+    assert set(m.ensayo.modelos) <= set(MODELOS.values()) and dict(zip(m.ensayo.prompts, m.ensayo.modelos, strict=True))[
         m.ensayo.prompts[0]] == "haiku"
     assert not prompts_de(m, "/triage")
     assert v["bitacora"][-1].startswith("Revisión")           # la revisión va al final, tras e2e OK
-    assert [e["evento"] for e in eventos(m)] == ["defensas", "veredicto"]
+    assert [e["evento"] for e in eventos(m)] == ["defensas", "veredicto", "revision"]
 
 
 def test_bloqueada(montar):
@@ -287,3 +290,102 @@ def test_cli_en_ensayo(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(tempfile, "mkdtemp", lambda prefix="": str(tmp_path))
     assert main([HISTORIA, "--ensayo", "--aprobar"]) == 0
     assert "LISTA" in capsys.readouterr().out
+
+
+# --- Fase 2 · el revisor real en el grafo ---------------------------------------------------------------------
+def test_revisor_estatico_rechaza_y_el_ciclo_corrige(montar):
+    """Rechazo de la capa estática (sin modelo): corregir_codigo recibe la observación formateada por el código."""
+    m = montar(Escenario(revisor_estatico_rechaza=True))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == LISTA and v["revisiones"] == 1
+    correccion = [p for p in prompts_de(m, "/construir") if "Corrige:" in p]
+    assert correccion == ["/construir HU-01 Corrige: Observaciones del revisor:\n"
+                          "- [seguridad] app/backend/main.py: bandit B307: uso de eval (nuevos: 1)"]
+    revisiones = [e for e in eventos(m) if e["evento"] == "revision"]
+    assert [(e["aprobada"], e["modelo_llamado"]) for e in revisiones] == [(False, False), (True, True)]
+
+
+def test_revisor_con_salida_invalida_escala_sin_corregir(montar):
+    m = montar(Escenario(revisor_salida_invalida=True))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == ESCALAR and v["revisiones"] == 0
+    assert not [p for p in prompts_de(m, "/construir") if "Corrige:" in p]
+    assert any("Revisión: ESCALAR · salida del revisor ausente o inválida" in b for b in v["bitacora"])
+
+
+def test_la_revision_completa_vive_en_registros(montar):
+    """revision.json y el evento van a registros/; el reporte y el evento público no llevan el texto de las observaciones."""
+    detalle = "falta validar el correo en el backend"
+    m = montar(Escenario(revisor_rechazos=1))
+    correr_fabrica(m)
+    revision = json.loads((m.registros / "HU-01" / "revision.json").read_text(encoding="utf-8"))
+    assert revision["veredicto"] == "aprobada" and revision["base"] == ""        # la última revisión sobrescribe
+    assert "revision" in [e["evento"] for e in eventos(m)]
+    assert detalle not in (m.salida / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+    assert detalle not in (m.registros / "seguridad.jsonl").read_text(encoding="utf-8")
+
+
+def test_revision_json_conserva_las_observaciones_del_rechazo(montar):
+    m = montar(Escenario(revisor_rechazos=99))
+    correr_fabrica(m)
+    revision = json.loads((m.registros / "HU-01" / "revision.json").read_text(encoding="utf-8"))
+    assert revision["veredicto"] == "rechazada" and revision["observaciones"][0]["categoria"] == "regla_negocio"
+    assert set(revision["observaciones"][0]) == {"archivo", "categoria", "detalle"}
+
+
+def test_el_commit_base_llega_al_revisor(montar):
+    m = montar()
+    correr(m.app, m.cfg, responder_si, estado_inicial(HISTORIA, "abc123"))
+    assert m.ensayo.bases == ["abc123"]
+
+
+def test_correccion_de_codigo_que_no_modifica_app_escala(montar):
+    """Igual que construir: una corrección que no cambia app/ no se da por buena (ni se redesplega ni se prueba)."""
+    m = montar(Escenario(e2e_fallos=1, responsable="desarrollador", correccion_sin_cambios=True))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == ESCALAR
+    assert "redespliegue" not in m.ensayo.verificaciones and m.ensayo.verificaciones.count("e2e") == 1
+    assert "el desarrollador no modificó app/" in (m.salida / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+
+
+def test_el_modelo_de_revisar_esta_fijado():
+    assert MODELOS["revisar"] == "sonnet"
+
+
+# --- Precondición de una corrida real ---------------------------------------------------------------------------
+def test_precondicion_app_limpia_arranca_y_guarda_el_commit(repo):
+    assert precondicion_app(repo.ruta) is None
+    assert commit_base(repo.ruta) == repo.base
+
+
+def test_precondicion_app_con_cambios_no_arranca(repo):
+    (repo.ruta / "app" / "backend" / "heredado.py").write_text("x = 2\n", encoding="utf-8")
+    assert "app/backend/heredado.py" in precondicion_app(repo.ruta)
+
+
+def test_precondicion_app_con_archivo_nuevo_no_arranca(repo):
+    (repo.ruta / "app" / "backend" / "nuevo.py").write_text("x = 2\n", encoding="utf-8")
+    assert "nuevo.py" in precondicion_app(repo.ruta)
+
+
+def test_cambios_fuera_de_app_no_impiden_arrancar(repo):
+    (repo.ruta / "contexto" / "reglas_negocio.md").write_text("otra cosa\n", encoding="utf-8")
+    assert precondicion_app(repo.ruta) is None
+
+
+def test_una_corrida_real_con_app_sucia_no_inicia(monkeypatch, capsys):
+    """main devuelve un código distinto de 0 y no llega a crear servicios, grafo ni checkpoint."""
+    monkeypatch.setattr(fabrica, "precondicion_app", lambda: "app/ tiene cambios sin commitear")
+
+    def no_debe_llamarse():
+        raise AssertionError("no debía crear los servicios reales")
+
+    monkeypatch.setattr(fabrica, "servicios_reales", no_debe_llamarse)
+    assert main([HISTORIA]) == 2
+    assert "No se inicia la corrida" in capsys.readouterr().err
+
+
+def test_el_ensayo_no_exige_app_limpia(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda prefix="": str(tmp_path))
+    monkeypatch.setattr(fabrica, "precondicion_app", lambda: "sucia")
+    assert main([HISTORIA, "--ensayo", "--aprobar"]) == 0

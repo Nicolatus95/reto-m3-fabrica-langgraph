@@ -44,7 +44,7 @@ def revisar(rol, hu: str) -> list[str]:
             encontrados = [f"La compuerta no sabe validar {rol.entrega}; agrega su validador en validadores/validar.py."]
         problemas += encontrados
     if rol.verifica and not problemas:
-        from verificacion import verificar       # se importa solo si hace falta (sesión 2 en adelante)
+        from verificacion import verificar  # se importa solo si hace falta (sesión 2 en adelante)
         ok, log = verificar(rol.verifica, hu)
         if not ok:
             problemas.append(f"La verificación «{rol.verifica}» falló:\n{log[-3000:]}")

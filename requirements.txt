@@ -4,7 +4,7 @@ langgraph
 langgraph-checkpoint-sqlite
 pytest
 pytest-playwright
-ruff
-bandit
+ruff==0.17.5
+bandit==1.9.4
 # dependencias del backend que genera la fábrica (FastAPI, SQLAlchemy, ...)
 -r app/backend/requirements.txt

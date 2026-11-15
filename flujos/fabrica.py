@@ -19,6 +19,7 @@ import operator
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -35,7 +36,8 @@ from langgraph.types import Command, interrupt
 
 import verificacion
 from flujos import claude
-from validadores.contratos import Diagnostico, preguntas_abiertas
+from flujos.revisor import ResultadoRevision, RevisorReal, formatear_observaciones
+from validadores.contratos import Diagnostico, Observacion, preguntas_abiertas
 from validadores.validar import problemas_de
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -56,6 +58,7 @@ ESCALAR = "ESCALAR A UNA PERSONA"
 MODELOS = {
     "filtrar": "haiku", "criterios": "sonnet", "casos": "sonnet", "plan": "sonnet",
     "construir": "sonnet", "desplegar": "sonnet", "automatizar": "sonnet", "triage": "sonnet",
+    "revisar": "sonnet",
 }
 
 
@@ -64,6 +67,7 @@ class Estado(TypedDict, total=False):
 
     historia: str                    # ruta de la historia; el orquestador NUNCA lee su contenido
     hu: str                          # HU-xx, sale del nombre del archivo
+    base: str                        # commit al arrancar la corrida: la base de lo que revisa el revisor
     sospechosa: bool                 # único dato del veredicto que usa el flujo
     preguntas: list[str]
     rechazos: int
@@ -89,11 +93,6 @@ class Estado(TypedDict, total=False):
 
 
 # --- Servicios: lo que el grafo necesita del mundo (se sustituye en el ensayo) -----------------------
-def revisor_pendiente(hu: str) -> tuple[bool, list[str]]:
-    """Revisor de la fase 1: un STUB que aprueba siempre. La fase 2 lo reemplaza por un revisor con modelo."""
-    return True, []
-
-
 @dataclass
 class Servicios:
     """Dependencias externas del grafo: llamar al modelo, verificar y dónde se escribe `salida/`."""
@@ -103,13 +102,41 @@ class Servicios:
     salida: Path
     app: Path                                                   # carpeta app/ cuyos cambios vigila construir
     registros: Path                                             # detalle de seguridad: ningún rol de hooks/roles.py lo lee
-    revisor: Callable[[str], tuple[bool, list[str]]] = revisor_pendiente
+    revisor: Callable[[str, str], ResultadoRevision]            # (hu, commit base) -> ResultadoRevision
 
 
 def servicios_reales() -> Servicios:
-    """Servicios de verdad: `claude -p`, las verificaciones de verificacion/ y la carpeta salida/ del proyecto."""
+    """Servicios de verdad: `claude -p`, las verificaciones de verificacion/, el revisor real y salida/ del proyecto."""
     return Servicios(ejecutar=claude.ejecutar, verificar=verificacion.verificar, salida=RAIZ / "salida",
-                     app=RAIZ / "app", registros=RAIZ / "registros")
+                     app=RAIZ / "app", registros=RAIZ / "registros",
+                     revisor=RevisorReal(ejecutar=claude.ejecutar, raiz=RAIZ, modelo=MODELOS["revisar"]))
+
+
+def _git_raiz(*args: str, raiz: Path = RAIZ) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=raiz, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", check=False)
+
+
+def precondicion_app(raiz: Path = RAIZ) -> str | None:
+    """Una corrida real exige app/ limpia en git: si no, el revisor no sabría qué cambió en la corrida.
+
+    Devuelve el mensaje de error, o None si se puede arrancar.
+    """
+    r = _git_raiz("status", "--porcelain", "app/", raiz=raiz)
+    if r.returncode != 0:
+        return f"No se pudo consultar git: {r.stderr.strip()}"
+    if r.stdout.strip():
+        return ("app/ tiene cambios sin commitear; la fábrica no arranca así porque el revisor revisa lo que cambia "
+                "en la corrida. Haz commit o descarta estos cambios:\n" + r.stdout.rstrip())
+    return None
+
+
+def commit_base(raiz: Path = RAIZ) -> str:
+    """El commit actual: la base de lo que revisa el revisor."""
+    r = _git_raiz("rev-parse", "HEAD", raiz=raiz)
+    if r.returncode != 0:
+        raise RuntimeError(f"No se pudo leer el commit base: {r.stderr.strip()}")
+    return r.stdout.strip()
 
 
 # --- Utilidades de nodos -----------------------------------------------------------------------------
@@ -361,7 +388,11 @@ def nodo_corregir_codigo(sv: Servicios, s: Estado) -> dict:
     Si la app no verifica o el redespliegue falla se escala con el log: no se sigue a e2e a ciegas.
     """
     hu = s["hu"]
+    antes = huella_app(sv.app)
     costo = costo_de(sv.ejecutar(f"/construir {hu} Corrige: {s['instruccion']}", modelo=MODELOS["construir"]))
+    if huella_app(sv.app) == antes:                 # igual que construir: sin cambios en app/ no hubo corrección
+        return {"estado_final": ESCALAR, "log_correccion": "el desarrollador no modificó app/", "costo_usd": costo,
+                "bitacora": ["Corrección de código sin cambios en app/: ESCALAR"]}
     for paso in ("app", "redespliegue"):            # primero la app; el código cambió y los contenedores tienen la vieja
         ok, log = sv.verificar(paso, hu)
         if not ok:
@@ -385,23 +416,36 @@ def nodo_corregir_despliegue(sv: Servicios, s: Estado) -> dict:
 
 
 def nodo_revisar(sv: Servicios, s: Estado) -> dict:
-    """Revisión de resultados, AL FINAL (después de e2e OK). En la fase 1 el revisor es un STUB que aprueba.
+    """Revisión de resultados, AL FINAL (después de e2e OK), con el revisor de flujos/revisor.py.
 
-    Fase 2: si el revisor rechaza → corregir_codigo → redespliegue → e2e → revisar, con un máximo de
-    MAX_CICLOS_REVISION ciclos; al agotarlo se escala.
+    La revisión completa va a registros/HU-xx/revision.json y un evento «revision» a registros/seguridad.jsonl
+    (solo booleanos y conteos al estado). Si el revisor rechaza → corregir_codigo → e2e → revisar, con un máximo de
+    MAX_CICLOS_REVISION ciclos; al agotarlo, o si el revisor escala, se escala. Las observaciones que llegan a
+    corregir_codigo las formatea el código con los campos del esquema.
     """
-    aprobado, observaciones = sv.revisor(s["hu"])
-    pendiente = sv.revisor is revisor_pendiente
-    if aprobado:
-        return {"revision_ok": True,
-                "bitacora": ["Revisión: aprobada (revisor pendiente: fase 2)" if pendiente else "Revisión: aprobada"]}
+    hu = s["hu"]
+    r = sv.revisor(hu, s.get("base", ""))
+    carpeta = sv.registros / hu
+    carpeta.mkdir(parents=True, exist_ok=True)
+    (carpeta / "revision.json").write_text(json.dumps({
+        "veredicto": r.veredicto, "motivo": r.motivo, "modelo_llamado": r.modelo_llamado, "base": s.get("base", ""),
+        "observaciones": [o.model_dump() for o in r.observaciones],
+        "informativas": [o.model_dump() for o in r.informativas]}, ensure_ascii=False, indent=2), encoding="utf-8")
+    base = {"costo_usd": r.costo, "eventos_seguridad": registrar_seguridad(sv, hu, [{
+        "evento": "revision", "veredicto": r.veredicto, "aprobada": r.veredicto == "aprobada",
+        "modelo_llamado": r.modelo_llamado, "observaciones": len(r.observaciones)}])}
+    if r.veredicto == "aprobada":
+        return {**base, "revision_ok": True, "bitacora": ["Revisión: aprobada"]}
+    if r.veredicto == "escalar":
+        return {**base, "revision_ok": False, "estado_final": ESCALAR,
+                "bitacora": [f"Revisión: ESCALAR · {r.motivo}"]}
     revisiones = s.get("revisiones", 0)
     if revisiones >= MAX_CICLOS_REVISION:
-        return {"revision_ok": False, "estado_final": ESCALAR,
+        return {**base, "revision_ok": False, "estado_final": ESCALAR,
                 "bitacora": ["Revisión: el revisor sigue rechazando tras el ciclo de corrección: ESCALAR"]}
-    return {"revision_ok": False, "revisiones": revisiones + 1,
-            "instruccion": "Observaciones del revisor:\n- " + "\n- ".join(observaciones),
-            "bitacora": [f"Revisión: rechazada ({len(observaciones)} observaciones)"]}
+    return {**base, "revision_ok": False, "revisiones": revisiones + 1,
+            "instruccion": formatear_observaciones(r.observaciones),
+            "bitacora": [f"Revisión: rechazada ({len(r.observaciones)} observaciones)"]}
 
 
 def nodo_reporte(sv: Servicios, s: Estado) -> dict:
@@ -504,12 +548,15 @@ def exportar_diagrama(app, ruta: Path = RAIZ / "docs" / "grafo.mmd") -> Path:
 
 
 # --- Ejecución con pausas humanas --------------------------------------------------------------------
-def estado_inicial(historia: str) -> Estado:
-    """Estado de partida: la ruta y el HU-xx salen del NOMBRE del archivo (nunca se lee su contenido)."""
+def estado_inicial(historia: str, base: str = "") -> Estado:
+    """Estado de partida: la ruta y el HU-xx salen del NOMBRE del archivo (nunca se lee su contenido).
+
+    `base` es el commit al arrancar (git rev-parse HEAD): lo que cambie después es lo que revisa el revisor.
+    """
     hu = re.search(r"HU-\d+", Path(historia).name)
     if not hu:
         raise ValueError(f"El nombre de la historia debe contener HU-xx: {historia}")
-    return {"historia": historia, "hu": hu.group(), "rechazos": 0, "intentos": 0, "ciclos": 0, "revisiones": 0,
+    return {"historia": historia, "hu": hu.group(), "base": base, "rechazos": 0, "intentos": 0, "ciclos": 0, "revisiones": 0,
             "costo_usd": 0.0, "bitacora": [], "eventos_seguridad": []}
 
 
@@ -566,7 +613,10 @@ class Escenario:
     construir_fallos: int = 0                # veces que la verificación de la app falla antes de pasar
     e2e_fallos: int = 0                      # veces que e2e falla antes de pasar (99 = nunca)
     responsable: str = "automatizador"       # a quién enruta el triage
-    revisor_rechazos: int = 0                # veces que el revisor (fase 2) rechaza
+    revisor_rechazos: int = 0                # veces que el revisor rechaza (capa LLM)
+    revisor_estatico_rechaza: bool = False   # el revisor rechaza una vez en la capa estática (sin llamar al modelo)
+    revisor_salida_invalida: bool = False    # la salida del revisor no valida contra Revision: debe escalar
+    correccion_sin_cambios: bool = False     # el desarrollador «corrige» sin tocar app/ (la construcción inicial sí)
     app_falla_tras_correccion: bool = False  # la app no verifica después de corregir el código
     redespliegue_falla: bool = False         # el redespliegue falla después de corregir el código
     sin_artefacto: frozenset[str] = frozenset()   # skills que «terminan» sin escribir su artefacto
@@ -583,6 +633,8 @@ PRESETS = {
     "e2e_despliegue": Escenario(e2e_fallos=1, responsable="despliegue"),
     "escalar_e2e": Escenario(e2e_fallos=99),
     "revisor_rechaza": Escenario(revisor_rechazos=1),
+    "revisor_estatico_rechaza": Escenario(revisor_estatico_rechaza=True),
+    "revisor_salida_invalida": Escenario(revisor_salida_invalida=True),
 }
 
 _GHERKIN = """# language: es
@@ -611,13 +663,13 @@ class Ensayo:
         self.prompts: list[str] = []
         self.modelos: list[str] = []
         self.verificaciones: list[str] = []
+        self.bases: list[str] = []          # el commit base que el grafo le pasó al revisor en cada revisión
         self._fallos = {"app": 0, "e2e": 0, "revision": 0, "versiones": 0}
 
     def servicios(self) -> Servicios:
-        """Los Servicios que usa el grafo; sin rechazos forzados se usa el STUB real `revisor_pendiente`."""
-        revisor = self.revisor if self.esc.revisor_rechazos else revisor_pendiente
+        """Los Servicios que usa el grafo, con el revisor doble."""
         return Servicios(ejecutar=self.ejecutar, verificar=self.verificar, salida=self.salida, app=self.app,
-                         registros=self.registros, revisor=revisor)
+                         registros=self.registros, revisor=self.revisor)
 
     def _escribir(self, ruta: Path, texto: str) -> None:
         """Escribe un archivo garantizando que su mtime avance (el grafo lo compara)."""
@@ -651,7 +703,7 @@ class Ensayo:
             elif skill == "/plan":
                 self._escribir(carpeta / "plan.md", "# Plan\n- Backend: endpoint de alta\n"
                                                     "- Frontend: formulario con data-testid=\"form-alta\"\n")
-            elif skill == "/construir":                  # el desarrollador modifica app/backend
+            elif skill == "/construir" and not (self.esc.correccion_sin_cambios and "Corrige:" in prompt):
                 self._fallos["versiones"] += 1
                 self._escribir(self.app / "backend" / "main.py", f"# versión {self._fallos['versiones']}\n")
             elif skill == "/triage":
@@ -682,12 +734,22 @@ class Ensayo:
             return True, "48 passed"
         return True, "ok"
 
-    def revisor(self, hu: str) -> tuple[bool, list[str]]:
-        """Doble del revisor de la fase 2: rechaza `revisor_rechazos` veces y luego aprueba."""
+    def revisor(self, hu: str, base: str) -> ResultadoRevision:
+        """Doble del revisor: según el Escenario escala, rechaza en la capa estática o en la LLM, y luego aprueba."""
+        self.bases.append(base)
+        if self.esc.revisor_salida_invalida:
+            return ResultadoRevision("escalar", motivo="salida del revisor ausente o inválida", modelo_llamado=True,
+                                     costo=0.01)
+        if self.esc.revisor_estatico_rechaza and self._fallos["revision"] == 0:
+            self._fallos["revision"] += 1
+            return ResultadoRevision("rechazada", [Observacion(
+                archivo="app/backend/main.py", categoria="seguridad", detalle="bandit B307: uso de eval (nuevos: 1)")])
         if self._fallos["revision"] < self.esc.revisor_rechazos:
             self._fallos["revision"] += 1
-            return False, ["falta validar el correo en el backend"]
-        return True, []
+            return ResultadoRevision("rechazada", [Observacion(
+                archivo="app/backend/main.py", categoria="regla_negocio",
+                detalle="falta validar el correo en el backend")], modelo_llamado=True, costo=0.01)
+        return ResultadoRevision("aprobada", modelo_llamado=True, costo=0.01)
 
 
 # --- CLI ---------------------------------------------------------------------------------------------
@@ -715,6 +777,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--diagrama", action="store_true", help="solo exporta docs/grafo.mmd")
     args = p.parse_args(argv)
 
+    base = "ensayo"
+    if args.historia and not args.ensayo and not args.reanudar and not args.diagrama:
+        problema = precondicion_app()                   # precondición de una corrida real: app/ limpia en git
+        if problema:
+            print(f"No se inicia la corrida. {problema}", file=sys.stderr)
+            return 2
+        base = commit_base()                            # lo que cambie desde este commit es lo que revisa el revisor
+
     if args.ensayo:                                     # el ensayo trabaja en una carpeta temporal: no toca salida/
         carpeta = Path(tempfile.mkdtemp(prefix="fabrica_ensayo_"))
         print(f"Ensayo «{args.escenario}» en {carpeta}")
@@ -735,7 +805,7 @@ def main(argv: list[str] | None = None) -> int:
             thread_id = args.reanudar
             valores = reanudar(app, {"configurable": {"thread_id": thread_id}}, responder)
         elif args.historia:
-            entrada = estado_inicial(args.historia)
+            entrada = estado_inicial(args.historia, base)
             thread_id = nuevo_thread(entrada["hu"])
             print(f"thread_id: {thread_id}  (para reanudar: --reanudar {thread_id})")
             valores = correr(app, {"configurable": {"thread_id": thread_id}}, responder, entrada)

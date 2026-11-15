@@ -143,6 +143,62 @@ Registro de decisiones, iteraciones, hallazgos y resultados. Las capturas citada
   y `comun.py` resuelve `npm` con `shutil.which` en Windows.
 - El resto son diferencias cosméticas (líneas en blanco, formato del JSON, saltos de línea).
 
+### Cierre de la clase
+- Commits de alineación y de `docs/`, etiqueta anotada `fin-clase` y push a GitHub. Todo lo
+  anterior a `fin-clase` es trabajo de clase; lo posterior es el reto.
+- Copia de archivo en `sesion04/` (sin `.git`, entornos, dependencias, datos locales ni
+  `.mcp.json`). `sesion01/` no se tocó.
+
+# Reto
+
+## Fase 0 · Spike de `claude -p` desde Python
+- La demo del Paso 7 ya probó que `claude -p "/fabrica ..."` ejecuta skills y subagentes con los
+  hooks activos. El spike se reduce a lo que necesita el grafo: llamar a un skill desde Python y
+  que el código lea el booleano del veredicto, salida estructurada sin herramientas (para el
+  revisor), que las variables de entorno lleguen a los hooks, y cómo se ve un error.
+- **Decisión de diseño:** cada nodo del grafo invoca uno de los skills existentes (`/filtrar`,
+  `/criterios`, `/casos`, `/plan`, `/construir`, `/desplegar`, `/automatizar`, `/triage`); el
+  código de Python verifica y decide la siguiente arista.
+- **Resultados** (commit `4584786`, costo total 0.15 USD):
+  - (a) `/filtrar` desde Python: el código leyó `sospechosa = False` del veredicto (6 s, 0.001 USD).
+  - (b) Salida estructurada con Haiku y sin herramientas (`--json-schema` de un modelo Pydantic
+    `Revision`): `aprobado = False` y la observación del `except:` vacío. Valida el enfoque del revisor.
+  - (c) `DEFENSAS` pasado por el entorno llega a los hooks (DESACTIVADAS / ACTIVADAS según el caso).
+  - (d) **Hallazgo:** un skill inexistente NO se detecta como error: `is_error = False`, código de
+    salida 0 y una respuesta en lenguaje natural. Ni el código de salida ni el texto sirven para
+    saber si un nodo hizo su trabajo. **Decisión:** el grafo juzga cada nodo por su artefacto
+    (existe, cambió su fecha de modificación y valida contra su contrato); `is_error` solo detecta
+    fallos de infraestructura.
+- **Hallazgos técnicos:** el prompt va después de `--`, porque `--tools` acepta varios valores y se
+  "tragaba" el prompt. Las llamadas sin `--model` usan el modelo de la sesión y cuestan unas 50 veces
+  más que con Haiku: cada nodo debe fijar su modelo.
+
+## Fase 1 · El orquestador en LangGraph (`flujos/fabrica.py`)
+- **Decisiones previas:** `/construir` acepta correcciones, igual que `/plan`, `/desplegar` y
+  `/automatizar` (commit propio; su ruta ya no depende del texto extra). El revisor va **al final**,
+  después de E2E, porque el reto exige el orden spec → plan → código → tests → revisión de
+  resultados. Hay una tabla `MODELOS` con el modelo de cada nodo (Haiku para el filtro y Sonnet para
+  el resto).
+- **Diseño:** 17 nodos. `Estado` con reducers (costo, bitácora, eventos de seguridad), aristas fijas
+  y condicionales, fan-out y fan-in (despliegue ∥ automatizador), `Command(goto=...)` en el triage
+  (supervisor), dos `interrupt()` (preguntas abiertas y aprobación del plan), `SqliteSaver` con
+  `thread_id` por corrida y reanudación, y el diagrama exportado a `docs/grafo.mmd`.
+- **Inyección de dependencias:** el grafo recibe `Servicios` (`ejecutar`, `verificar`, `salida`,
+  `revisor`). En el modo ensayo (`--ensayo --escenario <preset>`) son dobles deterministas que
+  escriben en una carpeta temporal: se prueban todas las rutas sin modelo, sin Docker y sin costo.
+- **Resultado:** 16 pruebas en verde (10 rutas, 2 de reglas de seguridad y artefacto, 2 de revisión,
+  diagrama y CLI) y `ruff` limpio. El flujo real con `claude -p` aún no se ha ejecutado.
+- **Revisión externa del código (en el chat de planeación, sin el sesgo del autor).** Encontré tres
+  huecos:
+  1. `construir` se juzga solo con la verificación de la app, pero la app ya existe y verifica (HU-01
+     a HU-03). Un `/construir` que no haga nada pasaría. Esto rompe la regla "cada nodo se juzga por
+     su artefacto": hay que comprobar que `app/` cambió.
+  2. `corregir_codigo` redespliega sin verificar antes la app, y no actúa si el redespliegue falla.
+  3. El `motivo` del veredicto se escribe en `salida/seguridad.jsonl` y en `reporte.md`, ambos dentro
+     de `salida/`, que los agentes pueden leer (`salida/*`). En una corrida posterior, el arquitecto,
+     el desarrollador o el triage podrían leer la paráfrasis del ataque. Hay que mover el registro
+     fuera del alcance de lectura de los agentes, y que el reporte no copie el `motivo`.
+
 ## Pendientes para el reto (anotados durante la clase)
 
 - Suite de red team con las evasiones del filtro textual (Paso 2) y comprobar qué capa detiene cada una.

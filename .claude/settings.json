@@ -20,8 +20,6 @@
       "Bash(npm *)",
       "Bash(npx *)",
       "Bash(node *)",
-      "Bash(pip *)",
-      "Bash(uv *)",
       "Bash(cd app && docker *)",
       "Bash(docker *)",
       "Bash(curl *)",
@@ -36,6 +34,10 @@
       {
         "matcher": "Read|Glob|Grep|Write|Edit|MultiEdit|NotebookEdit|Bash",
         "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR/.venv/Scripts/python\" \"$CLAUDE_PROJECT_DIR/hooks/rol.py\""}]
+      },
+      {
+        "matcher": "Read|Glob|Grep|Write|Edit|MultiEdit|Bash",
+        "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR/.venv/Scripts/python\" \"$CLAUDE_PROJECT_DIR/hooks/seguridad.py\""}]
       }
     ],
     "SubagentStop": [

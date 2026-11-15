@@ -16,3 +16,8 @@ dist/
 .idea/
 .pytest_cache/
 *.jsonl
+app/frontend/node_modules/
+app/frontend/dist/
+app/backend/datos/
+app/test-results/
+auditoria.jsonl

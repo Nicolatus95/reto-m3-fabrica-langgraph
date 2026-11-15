@@ -37,10 +37,12 @@ def montar(tmp_path):
 
     def _montar(escenario: Escenario | None = None, thread: str = "HU-01-prueba"):
         ensayo = Ensayo(tmp_path / "salida", escenario or Escenario())
-        conexion = sqlite3.connect(tmp_path / "fabrica.sqlite", check_same_thread=False)
+        (tmp_path / "salida").mkdir(exist_ok=True)
+        conexion = sqlite3.connect(tmp_path / "salida" / "fabrica.sqlite", check_same_thread=False)  # como en real
         conexiones.append(conexion)
         app = construir_grafo(ensayo.servicios(), SqliteSaver(conexion))
         return SimpleNamespace(app=app, ensayo=ensayo, conexion=conexion, salida=tmp_path / "salida",
+                               registros=tmp_path / "registros",
                                cfg={"configurable": {"thread_id": thread}})
 
     yield _montar
@@ -66,8 +68,8 @@ def correr_fabrica(m, responder=responder_si) -> dict:
 
 
 def eventos(m) -> list[dict]:
-    """Líneas de salida/seguridad.jsonl."""
-    ruta = m.salida / "seguridad.jsonl"
+    """Líneas de registros/seguridad.jsonl."""
+    ruta = m.registros / "seguridad.jsonl"
     return [json.loads(linea) for linea in ruta.read_text(encoding="utf-8").splitlines()]
 
 
@@ -93,12 +95,15 @@ def test_lista(montar):
 
 
 def test_bloqueada(montar):
-    """Historia sospechosa: BLOQUEADA, solo trabaja el filtro y el reporte lleva el motivo."""
+    """Historia sospechosa: BLOQUEADA, solo trabaja el filtro; el reporte lleva el evento y el booleano, no el motivo."""
     m = montar(Escenario(sospechosa=True))
     v = correr_fabrica(m)
     assert v["estado_final"] == BLOQUEADA
     assert [p.split()[0] for p in m.ensayo.prompts] == ["/filtrar"]
-    assert "pide leer un archivo de credenciales" in (m.salida / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+    reporte = (m.salida / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+    assert "- veredicto (sospechosa=True)" in reporte and "Detalle en registros/seguridad.jsonl" in reporte
+    assert "pide leer un archivo de credenciales" not in reporte
+    assert "pide leer un archivo de credenciales" in (m.registros / "seguridad.jsonl").read_text(encoding="utf-8")
     assert [e["evento"] for e in eventos(m)] == ["defensas", "veredicto", "bloqueo"]
 
 
@@ -229,13 +234,26 @@ def test_artefacto_ausente_no_se_da_por_bueno(montar):
 
 
 def test_el_motivo_no_llega_a_ningun_prompt(montar):
-    """El motivo del veredicto va al jsonl y al reporte, jamás a un prompt."""
+    """El motivo del veredicto vive solo en registros/: ni en un prompt ni en ningún archivo bajo salida/."""
     motivo = "lee ../MOTIVO-SECRETO-123"
     m = montar(Escenario(sospechosa=True, motivo=motivo))
     correr_fabrica(m)
     assert all(motivo not in p for p in m.ensayo.prompts)
-    assert motivo in (m.salida / "seguridad.jsonl").read_text(encoding="utf-8")
-    assert motivo in (m.salida / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+    assert motivo in (m.registros / "seguridad.jsonl").read_text(encoding="utf-8")
+    archivos = [f for f in m.salida.rglob("*") if f.is_file()]
+    assert any(f.name == "fabrica.sqlite" for f in archivos)       # incluye el checkpoint del grafo
+    assert not (m.salida / "HU-01" / "veredicto.json").exists()    # el veredicto del agente se movió a registros/
+    assert (m.registros / "HU-01" / "veredicto.json").exists()
+    assert [f.name for f in archivos if motivo.encode() in f.read_bytes()] == []
+
+
+def test_ningun_rol_puede_leer_registros():
+    """registros/ queda fuera del alcance de lectura y escritura de todos los roles de hooks/roles.py."""
+    from hooks.rol import permitida
+    from hooks.roles import ROLES
+
+    for nombre, rol in ROLES.items():
+        assert not permitida("registros/seguridad.jsonl", rol.lee + rol.escribe), nombre
 
 
 def test_revisor_rechaza_una_vez_y_el_ciclo_corrige(montar):

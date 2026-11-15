@@ -102,13 +102,14 @@ class Servicios:
     verificar: Callable[[str, str | None], tuple[bool, str]]    # (nombre, hu) -> (ok, log), como verificacion
     salida: Path
     app: Path                                                   # carpeta app/ cuyos cambios vigila construir
+    registros: Path                                             # detalle de seguridad: ningún rol de hooks/roles.py lo lee
     revisor: Callable[[str], tuple[bool, list[str]]] = revisor_pendiente
 
 
 def servicios_reales() -> Servicios:
     """Servicios de verdad: `claude -p`, las verificaciones de verificacion/ y la carpeta salida/ del proyecto."""
     return Servicios(ejecutar=claude.ejecutar, verificar=verificacion.verificar, salida=RAIZ / "salida",
-                     app=RAIZ / "app")
+                     app=RAIZ / "app", registros=RAIZ / "registros")
 
 
 # --- Utilidades de nodos -----------------------------------------------------------------------------
@@ -141,13 +142,20 @@ def falla(paso: str, problemas: list[str], costo: float = 0.0) -> dict:
             "bitacora": [f"{paso}: ESCALAR · " + "; ".join(problemas)]}
 
 
+PRIVADOS = ("motivo", "problemas")      # texto que puede venir del modelo: solo vive en registros/
+
+
 def registrar_seguridad(sv: Servicios, hu: str, eventos: list[dict]) -> list[dict]:
-    """Agrega los eventos a salida/seguridad.jsonl SIEMPRE (también con DEFENSAS=0) y los devuelve."""
+    """Agrega los eventos completos a registros/seguridad.jsonl SIEMPRE (también con DEFENSAS=0).
+
+    Devuelve la versión PÚBLICA (sin motivo ni problemas) para el estado: así el motivo no llega al checkpoint
+    ni al reporte, que viven en salida/ y sí pueden leer los agentes.
+    """
     completos = [{"ts": round(time.time(), 1), "hu": hu, **e} for e in eventos]
-    sv.salida.mkdir(parents=True, exist_ok=True)
-    with open(sv.salida / "seguridad.jsonl", "a", encoding="utf-8") as f:
+    sv.registros.mkdir(parents=True, exist_ok=True)
+    with open(sv.registros / "seguridad.jsonl", "a", encoding="utf-8") as f:
         f.writelines(json.dumps(e, ensure_ascii=False) + "\n" for e in completos)
-    return completos
+    return [{k: v for k, v in e.items() if k not in PRIVADOS} for e in completos]
 
 
 def huella_app(app: Path) -> dict[str, int]:
@@ -170,7 +178,7 @@ def ultimas_lineas(texto: str, n: int = 40) -> str:
 def nodo_filtrar(sv: Servicios, s: Estado) -> dict:
     """Filtro de seguridad: /filtrar → veredicto.json. Solo el booleano `sospechosa` entra al flujo.
 
-    El motivo del veredicto va únicamente a `eventos_seguridad` (seguridad.jsonl y el reporte): nunca a un prompt.
+    El motivo del veredicto va únicamente a registros/seguridad.jsonl: nunca a un prompt, ni al estado, ni a salida/.
     """
     hu = s["hu"]
     _, estado_defensas = sv.verificar("defensas", hu)
@@ -182,11 +190,16 @@ def nodo_filtrar(sv: Servicios, s: Estado) -> dict:
                 "bitacora": ["Filtro de historia DESACTIVADO (DEFENSAS=0)"]}
     ruta = sv.salida / hu / "veredicto.json"
     problemas, costo = producir_artefacto(sv, ruta, f"/filtrar {s['historia']}", "filtrar")
+    contenido = ruta.read_text(encoding="utf-8") if ruta.exists() else ""
+    if ruta.exists():                               # el agente deja el motivo en salida/ (que otros agentes leen):
+        destino = sv.registros / hu / "veredicto.json"     # el código lo mueve a registros/ apenas lo lee
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        ruta.replace(destino)
     if problemas:                                   # sin veredicto válido no se avanza: falla cerrado
         eventos.append({"evento": "veredicto_invalido", "problemas": problemas})
         return {**falla("Filtro de seguridad", problemas, costo),
                 "eventos_seguridad": registrar_seguridad(sv, hu, eventos)}
-    veredicto = json.loads(ruta.read_text(encoding="utf-8"))
+    veredicto = json.loads(contenido)
     sospechosa = bool(veredicto["sospechosa"])
     eventos.append({"evento": "veredicto", "sospechosa": sospechosa, "motivo": veredicto.get("motivo", "")})
     if sospechosa:
@@ -400,8 +413,11 @@ def nodo_reporte(sv: Servicios, s: Estado) -> dict:
               f"**Ciclos de corrección:** {s.get('ciclos', 0)} (revisión: {s.get('revisiones', 0)})",
               f"**Costo de agentes:** {s.get('costo_usd', 0.0):.4f} USD", "", "## Seguridad"]
     eventos = s.get("eventos_seguridad", [])
-    lineas += [f"- {json.dumps(e, ensure_ascii=False)}" for e in eventos] or ["- sin eventos"]
-    lineas += ["", "## Bitácora", *[f"- {b}" for b in s.get("bitacora", [])],
+    for e in eventos:                               # solo el evento y sus booleanos; el detalle queda fuera de salida/
+        booleanos = ", ".join(f"{k}={v}" for k, v in e.items() if isinstance(v, bool))
+        lineas.append(f"- {e['evento']}" + (f" ({booleanos})" if booleanos else ""))
+    lineas += ["- (sin eventos)"] if not eventos else []
+    lineas += ["", "Detalle en registros/seguridad.jsonl", "", "## Bitácora", *[f"- {b}" for b in s.get("bitacora", [])],
                "", "## Última ejecución de pruebas", "```", s.get("log_e2e", "(no se ejecutaron)"), "```", ""]
     if s.get("log_correccion"):
         lineas += ["## Corrección de código que no pasó", "```", ultimas_lineas(s["log_correccion"]), "```", ""]
@@ -591,6 +607,7 @@ class Ensayo:
         """Crea los dobles; `prompts`, `modelos` y `verificaciones` registran lo que el grafo les pidió."""
         self.salida, self.esc = salida, escenario
         self.app = salida.parent / "app"
+        self.registros = salida.parent / "registros"
         self.prompts: list[str] = []
         self.modelos: list[str] = []
         self.verificaciones: list[str] = []
@@ -600,7 +617,7 @@ class Ensayo:
         """Los Servicios que usa el grafo; sin rechazos forzados se usa el STUB real `revisor_pendiente`."""
         revisor = self.revisor if self.esc.revisor_rechazos else revisor_pendiente
         return Servicios(ejecutar=self.ejecutar, verificar=self.verificar, salida=self.salida, app=self.app,
-                         revisor=revisor)
+                         registros=self.registros, revisor=revisor)
 
     def _escribir(self, ruta: Path, texto: str) -> None:
         """Escribe un archivo garantizando que su mtime avance (el grafo lo compara)."""
@@ -701,7 +718,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.ensayo:                                     # el ensayo trabaja en una carpeta temporal: no toca salida/
         carpeta = Path(tempfile.mkdtemp(prefix="fabrica_ensayo_"))
         print(f"Ensayo «{args.escenario}» en {carpeta}")
-        sv = Ensayo(carpeta, PRESETS[args.escenario]).servicios()
+        sv = Ensayo(carpeta / "salida", PRESETS[args.escenario]).servicios()
     else:
         sv = servicios_reales()
     sv.salida.mkdir(parents=True, exist_ok=True)

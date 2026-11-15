@@ -53,4 +53,12 @@ ROLES = {
                          escribe=["app/tests/*"],
                          programas={"cd", "ls", ".venv/Scripts/python -m pytest", "uv"},
                          verifica="pruebas", max_intentos=2),
+    # Sesión 4 · el filtro lee contenido NO confiable, por eso casi no tiene poder: solo lee historias/
+    # y solo escribe su veredicto. El triage solo lee y escribe su diagnóstico: enruta, no corrige.
+    "filtro-seguridad": Rol(lee=["historias/*"],
+                            escribe=["salida/*/veredicto.json"],
+                            entrega="veredicto.json"),
+    "triage": Rol(lee=["contexto/*", "salida/*", "app/tests/*"],
+                  escribe=["salida/*/diagnostico.json"],
+                  entrega="diagnostico.json"),
 }

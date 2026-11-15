@@ -100,12 +100,14 @@ class Servicios:
     ejecutar: Callable[..., dict]                               # (prompt, *, modelo) -> dict de claude.ejecutar
     verificar: Callable[[str, str | None], tuple[bool, str]]    # (nombre, hu) -> (ok, log), como verificacion
     salida: Path
+    app: Path                                                   # carpeta app/ cuyos cambios vigila construir
     revisor: Callable[[str], tuple[bool, list[str]]] = revisor_pendiente
 
 
 def servicios_reales() -> Servicios:
     """Servicios de verdad: `claude -p`, las verificaciones de verificacion/ y la carpeta salida/ del proyecto."""
-    return Servicios(ejecutar=claude.ejecutar, verificar=verificacion.verificar, salida=RAIZ / "salida")
+    return Servicios(ejecutar=claude.ejecutar, verificar=verificacion.verificar, salida=RAIZ / "salida",
+                     app=RAIZ / "app")
 
 
 # --- Utilidades de nodos -----------------------------------------------------------------------------
@@ -145,6 +147,17 @@ def registrar_seguridad(sv: Servicios, hu: str, eventos: list[dict]) -> list[dic
     with open(sv.salida / "seguridad.jsonl", "a", encoding="utf-8") as f:
         f.writelines(json.dumps(e, ensure_ascii=False) + "\n" for e in completos)
     return completos
+
+
+def huella_app(app: Path) -> dict[str, int]:
+    """Huella de app/backend y app/frontend/src: ruta → mtime. Excluye node_modules, dist, datos y __pycache__."""
+    excluidos = {"node_modules", "dist", "datos", "__pycache__"}
+    huella = {}
+    for base in (app / "backend", app / "frontend" / "src"):
+        for ruta in base.rglob("*") if base.exists() else []:
+            if ruta.is_file() and not excluidos & set(ruta.relative_to(app).parts):
+                huella[ruta.relative_to(app).as_posix()] = ruta.stat().st_mtime_ns
+    return huella
 
 
 def ultimas_lineas(texto: str, n: int = 40) -> str:
@@ -243,7 +256,9 @@ def nodo_aprobar_plan(sv: Servicios, s: Estado) -> dict:
 
 
 def nodo_construir(sv: Servicios, s: Estado) -> dict:
-    """Desarrollador: /construir; la verificación de la app decide. Si falla, un reintento con el log.
+    """Desarrollador: /construir; decide el código: app/ debe haber cambiado Y verificacion app debe pasar.
+
+    Si falla (también si el agente no tocó app/), un reintento con el log.
 
     OJO, intencional: el subagente desarrollador ya tiene su propia compuerta (SubagentStop, máx 2), así que con
     el reintento del grafo son hasta 3 intentos de corregir antes de escalar.
@@ -253,8 +268,12 @@ def nodo_construir(sv: Servicios, s: Estado) -> dict:
     correccion = ""
     if intentos > 0:
         correccion = f" La verificación falló; corrige esto:\n{ultimas_lineas(s.get('log_app', ''))}"
+    antes = huella_app(sv.app)
     respuesta = sv.ejecutar(f"/construir {hu}{correccion}", modelo=MODELOS["construir"])
-    ok, log = sv.verificar("app", hu)               # el código decide, no el agente
+    if huella_app(sv.app) == antes:                 # sin cambios en app/ no hay nada que verificar: intento fallido
+        ok, log = False, "el desarrollador no modificó app/"
+    else:
+        ok, log = sv.verificar("app", hu)           # el código decide, no el agente
     actualiza = {"intentos": intentos + 1, "app_ok": ok, "log_app": log, "costo_usd": costo_de(respuesta),
                  "bitacora": [f"Construcción {intentos + 1}: verificación {'OK' if ok else 'FALLA'}"]}
     if not ok and intentos + 1 >= MAX_INTENTOS_CONSTRUIR:
@@ -558,15 +577,17 @@ class Ensayo:
     def __init__(self, salida: Path, escenario: Escenario):
         """Crea los dobles; `prompts`, `modelos` y `verificaciones` registran lo que el grafo les pidió."""
         self.salida, self.esc = salida, escenario
+        self.app = salida.parent / "app"
         self.prompts: list[str] = []
         self.modelos: list[str] = []
         self.verificaciones: list[str] = []
-        self._fallos = {"app": 0, "e2e": 0, "revision": 0}
+        self._fallos = {"app": 0, "e2e": 0, "revision": 0, "versiones": 0}
 
     def servicios(self) -> Servicios:
         """Los Servicios que usa el grafo; sin rechazos forzados se usa el STUB real `revisor_pendiente`."""
         revisor = self.revisor if self.esc.revisor_rechazos else revisor_pendiente
-        return Servicios(ejecutar=self.ejecutar, verificar=self.verificar, salida=self.salida, revisor=revisor)
+        return Servicios(ejecutar=self.ejecutar, verificar=self.verificar, salida=self.salida, app=self.app,
+                         revisor=revisor)
 
     def _escribir(self, ruta: Path, texto: str) -> None:
         """Escribe un archivo garantizando que su mtime avance (el grafo lo compara)."""
@@ -600,6 +621,9 @@ class Ensayo:
             elif skill == "/plan":
                 self._escribir(carpeta / "plan.md", "# Plan\n- Backend: endpoint de alta\n"
                                                     "- Frontend: formulario con data-testid=\"form-alta\"\n")
+            elif skill == "/construir":                  # el desarrollador modifica app/backend
+                self._fallos["versiones"] += 1
+                self._escribir(self.app / "backend" / "main.py", f"# versión {self._fallos['versiones']}\n")
             elif skill == "/triage":
                 self._escribir(carpeta / "diagnostico.json", json.dumps({
                     "responsable": self.esc.responsable, "causa": "la prueba espera 200 y el criterio dice 201",

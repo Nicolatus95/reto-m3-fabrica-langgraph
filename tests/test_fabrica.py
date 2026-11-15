@@ -36,11 +36,11 @@ def montar(tmp_path):
     conexiones = []
 
     def _montar(escenario: Escenario | None = None, thread: str = "HU-01-prueba"):
-        ensayo = Ensayo(tmp_path, escenario or Escenario())
+        ensayo = Ensayo(tmp_path / "salida", escenario or Escenario())
         conexion = sqlite3.connect(tmp_path / "fabrica.sqlite", check_same_thread=False)
         conexiones.append(conexion)
         app = construir_grafo(ensayo.servicios(), SqliteSaver(conexion))
-        return SimpleNamespace(app=app, ensayo=ensayo, conexion=conexion, salida=tmp_path,
+        return SimpleNamespace(app=app, ensayo=ensayo, conexion=conexion, salida=tmp_path / "salida",
                                cfg={"configurable": {"thread_id": thread}})
 
     yield _montar
@@ -127,6 +127,17 @@ def test_tres_rechazos_escalan(montar):
     v = correr_fabrica(m, guion("no1", "no2", "no3"))
     assert v["estado_final"] == ESCALAR and v["rechazos"] == 3
     assert len(prompts_de(m, "/plan")) == 3 and not prompts_de(m, "/construir")
+
+
+def test_construir_que_no_modifica_app_escala(montar):
+    """El desarrollador «termina» sin escribir nada en app/: cuenta como intento fallido, se reintenta y se escala."""
+    m = montar(Escenario(sin_artefacto=frozenset({"/construir"})))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == ESCALAR and v["intentos"] == 2
+    construir = prompts_de(m, "/construir")
+    assert len(construir) == 2 and "el desarrollador no modificó app/" in construir[1]
+    assert "app" not in m.ensayo.verificaciones              # sin cambios no se gasta una verificación
+    assert not prompts_de(m, "/desplegar") and not prompts_de(m, "/automatizar")
 
 
 def test_construir_falla_una_vez_y_pasa(montar):

@@ -1,0 +1,164 @@
+{
+  "historia": "HU-02",
+  "casos": [
+    {
+      "id": "CP-01",
+      "escenario": "Ver el directorio con los datos de cada empleado",
+      "nivel": "api",
+      "precondiciones": ["Base de datos sin empleados", "Departamentos Tecnología y Ventas válidos en GET /api/departamentos"],
+      "pasos": [
+        "POST /api/empleados con nombre Ana Torres, correo ana.torres@empresa.com, puesto Analista, departamento Tecnología, fecha_ingreso 2026-01-10",
+        "POST /api/empleados con nombre Luis Pérez, correo luis.perez@empresa.com, puesto Vendedor, departamento Ventas, fecha_ingreso 2026-02-01",
+        "GET /api/empleados"
+      ],
+      "datos": {"codigo_esperado": "200", "numero_1": "EMP-0001", "nombre_1": "Ana Torres", "puesto_1": "Analista", "departamento_1": "Tecnología", "estado_1": "activo", "numero_2": "EMP-0002", "nombre_2": "Luis Pérez", "puesto_2": "Vendedor", "departamento_2": "Ventas", "estado_2": "activo"},
+      "resultado_esperado": "Responde 200 con una lista de 2 empleados que incluye EMP-0001 Ana Torres, Analista, Tecnología, activo y EMP-0002 Luis Pérez, Vendedor, Ventas, activo."
+    },
+    {
+      "id": "CP-02",
+      "escenario": "Ver el directorio con los datos de cada empleado",
+      "nivel": "e2e",
+      "precondiciones": ["Empleados EMP-0001 Ana Torres y EMP-0002 Luis Pérez creados por API", "Frontend en http://localhost:5173"],
+      "pasos": [
+        "Abrir la pantalla del directorio",
+        "Verificar que existe tabla-empleados",
+        "Verificar fila-empleado-{id} de Ana Torres con numero-empleado-{id} = EMP-0001 y estado-empleado-{id} = Activo",
+        "Verificar fila-empleado-{id} de Luis Pérez con numero-empleado-{id} = EMP-0002 y estado-empleado-{id} = Activo"
+      ],
+      "datos": {"numero_1": "EMP-0001", "nombre_1": "Ana Torres", "puesto_1": "Analista", "departamento_1": "Tecnología", "estado_1": "Activo", "numero_2": "EMP-0002", "nombre_2": "Luis Pérez", "puesto_2": "Vendedor", "departamento_2": "Ventas", "estado_2": "Activo"},
+      "resultado_esperado": "La tabla muestra dos filas con número, nombre, puesto, departamento y estado correctos para cada empleado."
+    },
+    {
+      "id": "CP-03",
+      "escenario": "Buscar por nombre sin distinguir mayúsculas de minúsculas",
+      "nivel": "api",
+      "precondiciones": ["Existen Ana Torres (ana.torres@empresa.com) y Luis Pérez (luis.perez@empresa.com)"],
+      "pasos": ["GET /api/empleados?buscar=ANA TORRES (nombre del parámetro asumido: buscar)"],
+      "datos": {"busqueda": "ANA TORRES", "codigo_esperado": "200", "presente": "Ana Torres", "ausente": "Luis Pérez", "total_esperado": "1"},
+      "resultado_esperado": "Responde 200 con solo Ana Torres; Luis Pérez no aparece."
+    },
+    {
+      "id": "CP-04",
+      "escenario": "Buscar por nombre sin distinguir mayúsculas de minúsculas",
+      "nivel": "e2e",
+      "precondiciones": ["Existen Ana Torres y Luis Pérez", "Directorio abierto"],
+      "pasos": [
+        "Escribir ANA TORRES en buscar-empleados",
+        "Verificar que la fila de Ana Torres es visible en tabla-empleados",
+        "Verificar que la fila de Luis Pérez no existe"
+      ],
+      "datos": {"busqueda": "ANA TORRES", "presente": "Ana Torres", "ausente": "Luis Pérez"},
+      "resultado_esperado": "Solo se ve la fila de Ana Torres."
+    },
+    {
+      "id": "CP-05",
+      "escenario": "Buscar por correo sin distinguir mayúsculas de minúsculas",
+      "nivel": "api",
+      "precondiciones": ["Existen Ana Torres (ana.torres@empresa.com) y Luis Pérez (luis.perez@empresa.com)"],
+      "pasos": ["GET /api/empleados?buscar=Luis.Perez@Empresa.COM (nombre del parámetro asumido: buscar)"],
+      "datos": {"busqueda": "Luis.Perez@Empresa.COM", "codigo_esperado": "200", "presente": "Luis Pérez", "ausente": "Ana Torres", "total_esperado": "1"},
+      "resultado_esperado": "Responde 200 con solo Luis Pérez; Ana Torres no aparece."
+    },
+    {
+      "id": "CP-06",
+      "escenario": "Buscar por correo sin distinguir mayúsculas de minúsculas",
+      "nivel": "e2e",
+      "precondiciones": ["Existen Ana Torres y Luis Pérez", "Directorio abierto"],
+      "pasos": [
+        "Escribir Luis.Perez@Empresa.COM en buscar-empleados",
+        "Verificar que la fila de Luis Pérez es visible",
+        "Verificar que la fila de Ana Torres no existe"
+      ],
+      "datos": {"busqueda": "Luis.Perez@Empresa.COM", "presente": "Luis Pérez", "ausente": "Ana Torres"},
+      "resultado_esperado": "Solo se ve la fila de Luis Pérez."
+    },
+    {
+      "id": "CP-07",
+      "escenario": "Filtrar por departamento",
+      "nivel": "api",
+      "precondiciones": ["Existen Ana Torres (Tecnología), Luis Pérez (Ventas) y Marta Gil (Tecnología)"],
+      "pasos": ["GET /api/empleados?departamento=Tecnología (nombre del parámetro asumido: departamento)"],
+      "datos": {"departamento": "Tecnología", "codigo_esperado": "200", "presentes": "Ana Torres, Marta Gil", "ausente": "Luis Pérez", "total_esperado": "2"},
+      "resultado_esperado": "Responde 200 con Ana Torres y Marta Gil; Luis Pérez no aparece."
+    },
+    {
+      "id": "CP-08",
+      "escenario": "Filtrar por departamento",
+      "nivel": "e2e",
+      "precondiciones": ["Existen Ana Torres (Tecnología), Luis Pérez (Ventas) y Marta Gil (Tecnología)", "Directorio abierto"],
+      "pasos": [
+        "Seleccionar Tecnología en filtro-departamento",
+        "Verificar las filas de Ana Torres y Marta Gil en tabla-empleados",
+        "Verificar que la fila de Luis Pérez no existe"
+      ],
+      "datos": {"departamento": "Tecnología", "presentes": "Ana Torres, Marta Gil", "ausente": "Luis Pérez"},
+      "resultado_esperado": "Se ven las filas de Ana Torres y Marta Gil, y no la de Luis Pérez."
+    },
+    {
+      "id": "CP-09",
+      "escenario": "Búsqueda sin resultados muestra un mensaje",
+      "nivel": "api",
+      "precondiciones": ["Existen Ana Torres y Luis Pérez"],
+      "pasos": ["GET /api/empleados?buscar=Zacarías (nombre del parámetro asumido: buscar)"],
+      "datos": {"busqueda": "Zacarías", "codigo_esperado": "200", "total_esperado": "0"},
+      "resultado_esperado": "Responde 200 con una lista vacía."
+    },
+    {
+      "id": "CP-10",
+      "escenario": "Búsqueda sin resultados muestra un mensaje",
+      "nivel": "e2e",
+      "precondiciones": ["Existen Ana Torres y Luis Pérez", "Directorio abierto"],
+      "pasos": [
+        "Escribir Zacarías en buscar-empleados",
+        "Verificar que no hay ningún elemento fila-empleado-*",
+        "Verificar que sin-resultados es visible"
+      ],
+      "datos": {"busqueda": "Zacarías", "filas_esperadas": "0"},
+      "resultado_esperado": "No hay filas y sin-resultados muestra un mensaje de que no hay resultados."
+    },
+    {
+      "id": "CP-11",
+      "escenario": "Filtro por departamento sin empleados muestra un mensaje",
+      "nivel": "api",
+      "precondiciones": ["Existen Ana Torres (Tecnología) y Luis Pérez (Ventas)", "Finanzas es un departamento válido sin empleados"],
+      "pasos": ["GET /api/empleados?departamento=Finanzas (nombre del parámetro asumido: departamento)"],
+      "datos": {"departamento": "Finanzas", "codigo_esperado": "200", "total_esperado": "0"},
+      "resultado_esperado": "Responde 200 con una lista vacía."
+    },
+    {
+      "id": "CP-12",
+      "escenario": "Filtro por departamento sin empleados muestra un mensaje",
+      "nivel": "e2e",
+      "precondiciones": ["Existen Ana Torres (Tecnología) y Luis Pérez (Ventas)", "Directorio abierto"],
+      "pasos": [
+        "Seleccionar Finanzas en filtro-departamento",
+        "Verificar que no hay ningún elemento fila-empleado-*",
+        "Verificar que sin-resultados es visible"
+      ],
+      "datos": {"departamento": "Finanzas", "filas_esperadas": "0"},
+      "resultado_esperado": "No hay filas y sin-resultados muestra un mensaje de que no hay resultados."
+    },
+    {
+      "id": "CP-13",
+      "escenario": "Un empleado dado de baja sigue apareciendo en el directorio",
+      "nivel": "api",
+      "precondiciones": ["Existe EMP-0003 Marta Gil, dada de baja con fecha_baja 2026-03-15"],
+      "pasos": ["GET /api/empleados"],
+      "datos": {"codigo_esperado": "200", "numero": "EMP-0003", "nombre": "Marta Gil", "estado": "baja", "fecha_baja": "2026-03-15"},
+      "resultado_esperado": "Responde 200 e incluye a EMP-0003 Marta Gil con estado baja y fecha_baja 2026-03-15."
+    },
+    {
+      "id": "CP-14",
+      "escenario": "Un empleado dado de baja sigue apareciendo en el directorio",
+      "nivel": "e2e",
+      "precondiciones": ["Existe EMP-0003 Marta Gil con baja el 2026-03-15"],
+      "pasos": [
+        "Abrir la pantalla del directorio",
+        "Verificar fila-empleado-{id} de Marta Gil en tabla-empleados",
+        "Verificar numero-empleado-{id} = EMP-0003 y estado-empleado-{id} = Baja"
+      ],
+      "datos": {"numero": "EMP-0003", "nombre": "Marta Gil", "estado": "Baja"},
+      "resultado_esperado": "La fila de EMP-0003 Marta Gil aparece con estado Baja."
+    }
+  ]
+}

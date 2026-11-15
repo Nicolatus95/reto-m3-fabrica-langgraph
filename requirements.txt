@@ -1,0 +1,8 @@
+pydantic
+httpx
+langgraph
+langgraph-checkpoint-sqlite
+pytest
+pytest-playwright
+ruff
+bandit

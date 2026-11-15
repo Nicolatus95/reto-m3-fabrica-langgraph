@@ -1,0 +1,303 @@
+{
+  "historia": "HU-01",
+  "casos": [
+    {
+      "id": "CP-01",
+      "escenario": "Registro exitoso con número de empleado asignado por el sistema",
+      "nivel": "api",
+      "precondiciones": ["Base de datos vacía, sin empleados registrados"],
+      "pasos": [
+        "Enviar POST /api/empleados con nombre, correo, puesto, departamento y fecha_ingreso",
+        "Verificar el código de respuesta y el cuerpo",
+        "Enviar GET /api/empleados y comprobar el registro guardado"
+      ],
+      "datos": {"nombre": "Ana Torres", "correo": "ana.torres@empresa.com", "puesto": "Analista", "departamento": "Finanzas", "fecha_ingreso": "2024-03-15", "codigo_esperado": "201", "numero_empleado": "EMP-0001", "estado": "activo"},
+      "resultado_esperado": "Responde 201 con numero_empleado EMP-0001, estado activo y creado_en asignado por el sistema (no vacío)."
+    },
+    {
+      "id": "CP-02",
+      "escenario": "Registro exitoso con número de empleado asignado por el sistema",
+      "nivel": "e2e",
+      "precondiciones": ["Base de datos vacía", "Aplicación abierta en http://localhost:5173"],
+      "pasos": [
+        "Escribir 'Ana Torres' en empleado-nombre",
+        "Escribir 'ana.torres@empresa.com' en empleado-correo",
+        "Escribir 'Analista' en empleado-puesto",
+        "Seleccionar 'Finanzas' en empleado-departamento",
+        "Escribir '2024-03-15' en empleado-fecha-ingreso",
+        "Hacer clic en empleado-guardar",
+        "Leer mensaje-exito y la tabla tabla-empleados"
+      ],
+      "datos": {"nombre": "Ana Torres", "correo": "ana.torres@empresa.com", "puesto": "Analista", "departamento": "Finanzas", "fecha_ingreso": "2024-03-15", "numero_empleado": "EMP-0001", "estado_visible": "Activo"},
+      "resultado_esperado": "mensaje-exito muestra EMP-0001; la fila del empleado en tabla-empleados muestra EMP-0001 en numero-empleado-{id} y 'Activo' en estado-empleado-{id}."
+    },
+    {
+      "id": "CP-03",
+      "escenario": "El número de empleado es consecutivo",
+      "nivel": "api",
+      "precondiciones": ["Existe el empleado EMP-0001 (ana.torres@empresa.com)"],
+      "pasos": [
+        "Enviar POST /api/empleados con los datos de Luis Pérez",
+        "Verificar código y numero_empleado"
+      ],
+      "datos": {"nombre": "Luis Pérez", "correo": "luis.perez@empresa.com", "puesto": "Ejecutivo de ventas", "departamento": "Ventas", "fecha_ingreso": "2024-05-02", "codigo_esperado": "201", "numero_empleado": "EMP-0002"},
+      "resultado_esperado": "Responde 201 con numero_empleado EMP-0002."
+    },
+    {
+      "id": "CP-04",
+      "escenario": "El número de empleado es consecutivo",
+      "nivel": "e2e",
+      "precondiciones": ["Existe el empleado EMP-0001", "Aplicación abierta en http://localhost:5173"],
+      "pasos": [
+        "Escribir 'Luis Pérez' en empleado-nombre",
+        "Escribir 'luis.perez@empresa.com' en empleado-correo",
+        "Escribir 'Ejecutivo de ventas' en empleado-puesto",
+        "Seleccionar 'Ventas' en empleado-departamento",
+        "Escribir '2024-05-02' en empleado-fecha-ingreso",
+        "Hacer clic en empleado-guardar",
+        "Leer mensaje-exito"
+      ],
+      "datos": {"nombre": "Luis Pérez", "correo": "luis.perez@empresa.com", "puesto": "Ejecutivo de ventas", "departamento": "Ventas", "fecha_ingreso": "2024-05-02", "numero_empleado": "EMP-0002"},
+      "resultado_esperado": "mensaje-exito contiene EMP-0002 y numero-empleado-{id} de la nueva fila muestra EMP-0002."
+    },
+    {
+      "id": "CP-05",
+      "escenario": "El correo se guarda en minúsculas",
+      "nivel": "api",
+      "precondiciones": ["No existe empleado con correo marta.ruiz@empresa.com"],
+      "pasos": [
+        "Enviar POST /api/empleados con correo 'Marta.Ruiz@Empresa.com'",
+        "Verificar código 201 y el correo devuelto"
+      ],
+      "datos": {"nombre": "Marta Ruiz", "correo": "Marta.Ruiz@Empresa.com", "puesto": "Desarrolladora", "departamento": "Tecnología", "fecha_ingreso": "2024-01-10", "codigo_esperado": "201", "correo_guardado": "marta.ruiz@empresa.com"},
+      "resultado_esperado": "Responde 201 y el correo guardado es marta.ruiz@empresa.com."
+    },
+    {
+      "id": "CP-06",
+      "escenario": "El correo se guarda en minúsculas",
+      "nivel": "e2e",
+      "precondiciones": ["No existe empleado con correo marta.ruiz@empresa.com", "Aplicación abierta en http://localhost:5173"],
+      "pasos": [
+        "Escribir 'Marta Ruiz' en empleado-nombre",
+        "Escribir 'Marta.Ruiz@Empresa.com' en empleado-correo",
+        "Escribir 'Desarrolladora' en empleado-puesto",
+        "Seleccionar 'Tecnología' en empleado-departamento",
+        "Escribir '2024-01-10' en empleado-fecha-ingreso",
+        "Hacer clic en empleado-guardar",
+        "Verificar mensaje-exito y revisar la fila en tabla-empleados"
+      ],
+      "datos": {"nombre": "Marta Ruiz", "correo": "Marta.Ruiz@Empresa.com", "puesto": "Desarrolladora", "departamento": "Tecnología", "fecha_ingreso": "2024-01-10", "correo_guardado": "marta.ruiz@empresa.com"},
+      "resultado_esperado": "mensaje-exito visible y la fila de Marta Ruiz en tabla-empleados muestra el correo marta.ruiz@empresa.com en minúsculas."
+    },
+    {
+      "id": "CP-07",
+      "escenario": "Correo duplicado sin importar mayúsculas",
+      "nivel": "api",
+      "precondiciones": ["Existe un empleado con correo ana.torres@empresa.com"],
+      "pasos": [
+        "Enviar POST /api/empleados con correo 'ANA.TORRES@empresa.com'",
+        "Verificar código y mensaje",
+        "Enviar GET /api/empleados y contar los registros"
+      ],
+      "datos": {"nombre": "Ana Torres Díaz", "correo": "ANA.TORRES@empresa.com", "puesto": "Contadora", "departamento": "Finanzas", "fecha_ingreso": "2024-06-01", "codigo_esperado": "409", "mensaje_esperado": "El correo ya está registrado", "total_empleados": "1"},
+      "resultado_esperado": "Responde 409 con detail 'El correo ya está registrado' y el total de empleados sigue en 1."
+    },
+    {
+      "id": "CP-08",
+      "escenario": "Correo duplicado sin importar mayúsculas",
+      "nivel": "e2e",
+      "precondiciones": ["Existe un empleado con correo ana.torres@empresa.com", "Aplicación abierta en http://localhost:5173"],
+      "pasos": [
+        "Escribir 'Ana Torres Díaz' en empleado-nombre",
+        "Escribir 'ANA.TORRES@empresa.com' en empleado-correo",
+        "Escribir 'Contadora' en empleado-puesto",
+        "Seleccionar 'Finanzas' en empleado-departamento",
+        "Escribir '2024-06-01' en empleado-fecha-ingreso",
+        "Hacer clic en empleado-guardar",
+        "Leer mensaje-error y contar filas en tabla-empleados"
+      ],
+      "datos": {"nombre": "Ana Torres Díaz", "correo": "ANA.TORRES@empresa.com", "puesto": "Contadora", "departamento": "Finanzas", "fecha_ingreso": "2024-06-01", "mensaje_esperado": "El correo ya está registrado", "total_filas": "1"},
+      "resultado_esperado": "mensaje-error muestra 'El correo ya está registrado' y tabla-empleados sigue con 1 fila."
+    },
+    {
+      "id": "CP-09",
+      "escenario": "Correo que no es del dominio corporativo",
+      "nivel": "api",
+      "precondiciones": ["No existe empleado con correo ana.torres@gmail.com"],
+      "pasos": [
+        "Enviar POST /api/empleados con correo 'ana.torres@gmail.com'",
+        "Verificar código y mensaje",
+        "Enviar GET /api/empleados y comprobar que no hay registros nuevos"
+      ],
+      "datos": {"nombre": "Ana Torres", "correo": "ana.torres@gmail.com", "puesto": "Analista", "departamento": "Finanzas", "fecha_ingreso": "2024-03-15", "codigo_esperado": "422", "mensaje_esperado": "Usa el correo corporativo @empresa.com", "total_empleados": "0"},
+      "resultado_esperado": "Responde 422 con detail 'Usa el correo corporativo @empresa.com' y no se crea empleado."
+    },
+    {
+      "id": "CP-10",
+      "escenario": "Correo que no es del dominio corporativo",
+      "nivel": "e2e",
+      "precondiciones": ["Base de datos vacía", "Aplicación abierta en http://localhost:5173"],
+      "pasos": [
+        "Escribir 'Ana Torres' en empleado-nombre",
+        "Escribir 'ana.torres@gmail.com' en empleado-correo",
+        "Escribir 'Analista' en empleado-puesto",
+        "Seleccionar 'Finanzas' en empleado-departamento",
+        "Escribir '2024-03-15' en empleado-fecha-ingreso",
+        "Hacer clic en empleado-guardar",
+        "Leer mensaje-error"
+      ],
+      "datos": {"nombre": "Ana Torres", "correo": "ana.torres@gmail.com", "puesto": "Analista", "departamento": "Finanzas", "fecha_ingreso": "2024-03-15", "mensaje_esperado": "Usa el correo corporativo @empresa.com", "total_filas": "0"},
+      "resultado_esperado": "mensaje-error muestra 'Usa el correo corporativo @empresa.com' y tabla-empleados no contiene filas nuevas."
+    },
+    {
+      "id": "CP-11",
+      "escenario": "Fecha de ingreso futura",
+      "nivel": "api",
+      "precondiciones": ["Base de datos vacía"],
+      "pasos": [
+        "Enviar POST /api/empleados con fecha_ingreso '2099-01-01'",
+        "Verificar código y mensaje",
+        "Enviar GET /api/empleados y comprobar que no hay registros"
+      ],
+      "datos": {"nombre": "Pedro Gil", "correo": "pedro.gil@empresa.com", "puesto": "Operador", "departamento": "Operaciones", "fecha_ingreso": "2099-01-01", "codigo_esperado": "422", "mensaje_esperado": "La fecha de ingreso no puede ser futura", "total_empleados": "0"},
+      "resultado_esperado": "Responde 422 con detail 'La fecha de ingreso no puede ser futura' y no se crea empleado."
+    },
+    {
+      "id": "CP-12",
+      "escenario": "Fecha de ingreso futura",
+      "nivel": "e2e",
+      "precondiciones": ["Base de datos vacía", "Aplicación abierta en http://localhost:5173"],
+      "pasos": [
+        "Escribir 'Pedro Gil' en empleado-nombre",
+        "Escribir 'pedro.gil@empresa.com' en empleado-correo",
+        "Escribir 'Operador' en empleado-puesto",
+        "Seleccionar 'Operaciones' en empleado-departamento",
+        "Escribir '2099-01-01' en empleado-fecha-ingreso",
+        "Hacer clic en empleado-guardar",
+        "Leer mensaje-error"
+      ],
+      "datos": {"nombre": "Pedro Gil", "correo": "pedro.gil@empresa.com", "puesto": "Operador", "departamento": "Operaciones", "fecha_ingreso": "2099-01-01", "mensaje_esperado": "La fecha de ingreso no puede ser futura", "total_filas": "0"},
+      "resultado_esperado": "mensaje-error muestra 'La fecha de ingreso no puede ser futura' y no aparece fila nueva en tabla-empleados."
+    },
+    {
+      "id": "CP-13",
+      "escenario": "Nombre demasiado corto",
+      "nivel": "api",
+      "precondiciones": ["No existe empleado con correo a.b@empresa.com"],
+      "pasos": [
+        "Enviar POST /api/empleados con nombre 'A'",
+        "Verificar código 422 y que el error referencia el campo nombre",
+        "Enviar GET /api/empleados y comprobar que no hay registros nuevos"
+      ],
+      "datos": {"nombre": "A", "correo": "a.b@empresa.com", "puesto": "Analista", "departamento": "Tecnología", "fecha_ingreso": "2024-03-15", "codigo_esperado": "422", "campo_con_error": "nombre", "total_empleados": "0"},
+      "resultado_esperado": "Responde 422 indicando el campo nombre y no se crea empleado."
+    },
+    {
+      "id": "CP-14",
+      "escenario": "Nombre demasiado corto",
+      "nivel": "e2e",
+      "precondiciones": ["Base de datos vacía", "Aplicación abierta en http://localhost:5173"],
+      "pasos": [
+        "Escribir 'A' en empleado-nombre",
+        "Escribir 'a.b@empresa.com' en empleado-correo",
+        "Escribir 'Analista' en empleado-puesto",
+        "Seleccionar 'Tecnología' en empleado-departamento",
+        "Escribir '2024-03-15' en empleado-fecha-ingreso",
+        "Hacer clic en empleado-guardar",
+        "Leer mensaje-error"
+      ],
+      "datos": {"nombre": "A", "correo": "a.b@empresa.com", "puesto": "Analista", "departamento": "Tecnología", "fecha_ingreso": "2024-03-15", "campo_con_error": "nombre", "total_filas": "0"},
+      "resultado_esperado": "mensaje-error indica que debe corregirse el campo nombre y tabla-empleados no tiene filas nuevas."
+    },
+    {
+      "id": "CP-15",
+      "escenario": "Puesto vacío",
+      "nivel": "api",
+      "precondiciones": ["No existe empleado con correo sofia.mena@empresa.com"],
+      "pasos": [
+        "Enviar POST /api/empleados con puesto ''",
+        "Verificar código 422 y que el error referencia el campo puesto",
+        "Enviar GET /api/empleados y comprobar que no hay registros nuevos"
+      ],
+      "datos": {"nombre": "Sofía Mena", "correo": "sofia.mena@empresa.com", "puesto": "", "departamento": "Recursos Humanos", "fecha_ingreso": "2024-03-15", "codigo_esperado": "422", "campo_con_error": "puesto", "total_empleados": "0"},
+      "resultado_esperado": "Responde 422 indicando el campo puesto y no se crea empleado."
+    },
+    {
+      "id": "CP-16",
+      "escenario": "Puesto vacío",
+      "nivel": "e2e",
+      "precondiciones": ["Base de datos vacía", "Aplicación abierta en http://localhost:5173"],
+      "pasos": [
+        "Escribir 'Sofía Mena' en empleado-nombre",
+        "Escribir 'sofia.mena@empresa.com' en empleado-correo",
+        "Dejar vacío empleado-puesto",
+        "Seleccionar 'Recursos Humanos' en empleado-departamento",
+        "Escribir '2024-03-15' en empleado-fecha-ingreso",
+        "Hacer clic en empleado-guardar",
+        "Leer mensaje-error"
+      ],
+      "datos": {"nombre": "Sofía Mena", "correo": "sofia.mena@empresa.com", "puesto": "", "departamento": "Recursos Humanos", "fecha_ingreso": "2024-03-15", "campo_con_error": "puesto", "total_filas": "0"},
+      "resultado_esperado": "mensaje-error indica que debe corregirse el campo puesto y no aparece fila nueva en tabla-empleados."
+    },
+    {
+      "id": "CP-17",
+      "escenario": "Departamento fuera de la lista permitida",
+      "nivel": "api",
+      "precondiciones": ["No existe empleado con correo raul.vega@empresa.com", "GET /api/departamentos no incluye Marketing"],
+      "pasos": [
+        "Enviar POST /api/empleados con departamento 'Marketing'",
+        "Verificar código 422 y que el error referencia el campo departamento",
+        "Enviar GET /api/empleados y comprobar que no hay registros nuevos"
+      ],
+      "datos": {"nombre": "Raúl Vega", "correo": "raul.vega@empresa.com", "puesto": "Analista", "departamento": "Marketing", "fecha_ingreso": "2024-03-15", "codigo_esperado": "422", "campo_con_error": "departamento", "total_empleados": "0"},
+      "resultado_esperado": "Responde 422 indicando el campo departamento y no se crea empleado."
+    },
+    {
+      "id": "CP-18",
+      "escenario": "Departamento fuera de la lista permitida",
+      "nivel": "e2e",
+      "precondiciones": ["Base de datos vacía", "Aplicación abierta en http://localhost:5173"],
+      "pasos": [
+        "Escribir 'Raúl Vega' en empleado-nombre",
+        "Escribir 'raul.vega@empresa.com' en empleado-correo",
+        "Escribir 'Analista' en empleado-puesto",
+        "Intentar elegir 'Marketing' en empleado-departamento (si el control solo ofrece la lista permitida, forzar el valor por la API de la página)",
+        "Escribir '2024-03-15' en empleado-fecha-ingreso",
+        "Hacer clic en empleado-guardar",
+        "Leer mensaje-error"
+      ],
+      "datos": {"nombre": "Raúl Vega", "correo": "raul.vega@empresa.com", "puesto": "Analista", "departamento": "Marketing", "fecha_ingreso": "2024-03-15", "campo_con_error": "departamento", "total_filas": "0"},
+      "resultado_esperado": "mensaje-error indica que debe corregirse el campo departamento y tabla-empleados no tiene filas nuevas."
+    },
+    {
+      "id": "CP-19",
+      "escenario": "Fecha de ingreso ausente",
+      "nivel": "api",
+      "precondiciones": ["No existe empleado con correo eva.lara@empresa.com"],
+      "pasos": [
+        "Enviar POST /api/empleados sin el campo fecha_ingreso",
+        "Verificar código 422 y que el error referencia el campo fecha_ingreso",
+        "Enviar GET /api/empleados y comprobar que no hay registros nuevos"
+      ],
+      "datos": {"nombre": "Eva Lara", "correo": "eva.lara@empresa.com", "puesto": "Analista", "departamento": "Ventas", "fecha_ingreso": "", "codigo_esperado": "422", "campo_con_error": "fecha_ingreso", "total_empleados": "0"},
+      "resultado_esperado": "Responde 422 indicando el campo fecha_ingreso y no se crea empleado."
+    },
+    {
+      "id": "CP-20",
+      "escenario": "Fecha de ingreso ausente",
+      "nivel": "e2e",
+      "precondiciones": ["Base de datos vacía", "Aplicación abierta en http://localhost:5173"],
+      "pasos": [
+        "Escribir 'Eva Lara' en empleado-nombre",
+        "Escribir 'eva.lara@empresa.com' en empleado-correo",
+        "Escribir 'Analista' en empleado-puesto",
+        "Seleccionar 'Ventas' en empleado-departamento",
+        "Dejar vacío empleado-fecha-ingreso",
+        "Hacer clic en empleado-guardar",
+        "Leer mensaje-error"
+      ],
+      "datos": {"nombre": "Eva Lara", "correo": "eva.lara@empresa.com", "puesto": "Analista", "departamento": "Ventas", "fecha_ingreso": "", "campo_con_error": "fecha_ingreso", "total_filas": "0"},
+      "resultado_esperado": "mensaje-error indica que debe corregirse el campo fecha_ingreso y no aparece fila nueva en tabla-empleados."
+    }
+  ]
+}

@@ -1,0 +1,196 @@
+{
+  "historia": "HU-03",
+  "casos": [
+    {
+      "id": "CP-01",
+      "escenario": "Editar puesto y departamento de un empleado activo",
+      "nivel": "api",
+      "precondiciones": ["Existe el empleado activo EMP-0001, correo ana.lopez@empresa.com, puesto Analista, departamento Ventas"],
+      "pasos": [
+        "Enviar PUT /api/empleados/{id} con puesto 'Líder de Finanzas' y departamento 'Finanzas'",
+        "Verificar el código de respuesta",
+        "Hacer GET /api/empleados/{id} y comparar campos"
+      ],
+      "datos": {"numero_empleado": "EMP-0001", "correo": "ana.lopez@empresa.com", "puesto": "Líder de Finanzas", "departamento": "Finanzas", "codigo_esperado": "200", "estado_esperado": "activo"},
+      "resultado_esperado": "Responde 200; puesto y departamento actualizados; numero_empleado EMP-0001 y correo ana.lopez@empresa.com sin cambios; estado sigue 'activo'."
+    },
+    {
+      "id": "CP-02",
+      "escenario": "Editar puesto y departamento de un empleado activo",
+      "nivel": "e2e",
+      "precondiciones": ["Empleado activo EMP-0001 (Analista, Ventas) visible en el directorio"],
+      "pasos": [
+        "Abrir la app en http://localhost:5173",
+        "Pulsar editar-empleado-{id} en la fila fila-empleado-{id} del empleado EMP-0001",
+        "Escribir 'Líder de Finanzas' en empleado-puesto",
+        "Elegir 'Finanzas' en empleado-departamento",
+        "Pulsar empleado-guardar",
+        "Revisar mensaje-exito, numero-empleado-{id} y estado-empleado-{id}"
+      ],
+      "datos": {"numero_empleado": "EMP-0001", "puesto": "Líder de Finanzas", "departamento": "Finanzas", "estado_visible": "Activo"},
+      "resultado_esperado": "Se muestra mensaje-exito; la fila muestra puesto 'Líder de Finanzas' y departamento 'Finanzas'; numero-empleado-{id} sigue 'EMP-0001'; estado-empleado-{id} dice 'Activo'."
+    },
+    {
+      "id": "CP-03",
+      "escenario": "Rechazar un departamento fuera de la lista permitida",
+      "nivel": "api",
+      "precondiciones": ["Existe el empleado activo EMP-0002 con departamento Ventas"],
+      "pasos": [
+        "Enviar PUT /api/empleados/{id} con departamento 'Marketing'",
+        "Verificar código y detalle del error",
+        "Hacer GET /api/empleados/{id}"
+      ],
+      "datos": {"numero_empleado": "EMP-0002", "departamento": "Marketing", "codigo_esperado": "422", "departamento_conservado": "Ventas"},
+      "resultado_esperado": "Responde 422 con detail que menciona el campo departamento; el empleado conserva el departamento Ventas."
+    },
+    {
+      "id": "CP-04",
+      "escenario": "Rechazar un departamento fuera de la lista permitida",
+      "nivel": "e2e",
+      "precondiciones": ["Empleado activo EMP-0002 (Ventas) en el directorio"],
+      "pasos": [
+        "Pulsar editar-empleado-{id} del empleado EMP-0002",
+        "Intentar fijar 'Marketing' en empleado-departamento (si la lista no lo ofrece, la validación del servidor se comprueba en el caso api)",
+        "Pulsar empleado-guardar",
+        "Revisar mensaje-error y estado de la fila"
+      ],
+      "datos": {"numero_empleado": "EMP-0002", "departamento": "Marketing", "campo_a_corregir": "departamento", "departamento_conservado": "Ventas"},
+      "resultado_esperado": "mensaje-error indica que se debe corregir el campo departamento; la fila sigue mostrando Ventas."
+    },
+    {
+      "id": "CP-05",
+      "escenario": "Rechazar un puesto de un solo carácter",
+      "nivel": "api",
+      "precondiciones": ["Existe el empleado activo EMP-0003 con puesto Analista"],
+      "pasos": [
+        "Enviar PUT /api/empleados/{id} con puesto 'A'",
+        "Verificar código y detalle",
+        "Hacer GET /api/empleados/{id}"
+      ],
+      "datos": {"numero_empleado": "EMP-0003", "puesto": "A", "codigo_esperado": "422", "puesto_conservado": "Analista"},
+      "resultado_esperado": "Responde 422 con detail que menciona el campo puesto; el empleado conserva el puesto Analista."
+    },
+    {
+      "id": "CP-06",
+      "escenario": "Rechazar un puesto de un solo carácter",
+      "nivel": "e2e",
+      "precondiciones": ["Empleado activo EMP-0003 (Analista) en el directorio"],
+      "pasos": [
+        "Pulsar editar-empleado-{id} del empleado EMP-0003",
+        "Escribir 'A' en empleado-puesto",
+        "Pulsar empleado-guardar",
+        "Revisar mensaje-error"
+      ],
+      "datos": {"numero_empleado": "EMP-0003", "puesto": "A", "campo_a_corregir": "puesto", "puesto_conservado": "Analista"},
+      "resultado_esperado": "mensaje-error indica que se debe corregir el campo puesto; la fila sigue mostrando Analista."
+    },
+    {
+      "id": "CP-07",
+      "escenario": "Rechazar un puesto de más de 60 caracteres",
+      "nivel": "api",
+      "precondiciones": ["Existe el empleado activo EMP-0004 con puesto Analista"],
+      "pasos": [
+        "Enviar PUT /api/empleados/{id} con un puesto de 61 caracteres (letra 'A' repetida 61 veces)",
+        "Verificar código y detalle",
+        "Hacer GET /api/empleados/{id}"
+      ],
+      "datos": {"numero_empleado": "EMP-0004", "puesto": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "longitud_puesto": "61", "codigo_esperado": "422", "puesto_conservado": "Analista"},
+      "resultado_esperado": "Responde 422 con detail que menciona el campo puesto; el empleado conserva el puesto Analista."
+    },
+    {
+      "id": "CP-08",
+      "escenario": "Rechazar un puesto de más de 60 caracteres",
+      "nivel": "e2e",
+      "precondiciones": ["Empleado activo EMP-0004 (Analista) en el directorio"],
+      "pasos": [
+        "Pulsar editar-empleado-{id} del empleado EMP-0004",
+        "Escribir en empleado-puesto un texto de 61 caracteres",
+        "Pulsar empleado-guardar",
+        "Revisar mensaje-error"
+      ],
+      "datos": {"numero_empleado": "EMP-0004", "longitud_puesto": "61", "campo_a_corregir": "puesto", "puesto_conservado": "Analista"},
+      "resultado_esperado": "mensaje-error indica que se debe corregir el campo puesto; la fila sigue mostrando Analista."
+    },
+    {
+      "id": "CP-09",
+      "escenario": "Dar de baja a un empleado activo",
+      "nivel": "api",
+      "precondiciones": ["Existe el empleado activo EMP-0005 con fecha de ingreso 2024-03-01"],
+      "pasos": [
+        "Enviar la solicitud de baja del empleado con fecha_baja 2026-10-15",
+        "Verificar código de respuesta y cuerpo",
+        "Hacer GET /api/empleados y comprobar que EMP-0005 sigue en la lista"
+      ],
+      "datos": {"numero_empleado": "EMP-0005", "fecha_ingreso": "2024-03-01", "fecha_baja": "2026-10-15", "codigo_esperado": "200", "estado_esperado": "baja"},
+      "resultado_esperado": "Responde 200; estado 'baja' y fecha_baja '2026-10-15'; el empleado sigue apareciendo en el listado."
+    },
+    {
+      "id": "CP-10",
+      "escenario": "Dar de baja a un empleado activo",
+      "nivel": "e2e",
+      "precondiciones": ["Empleado activo EMP-0005 (ingreso 2024-03-01) en el directorio"],
+      "pasos": [
+        "Pulsar baja-empleado-{id} en la fila fila-empleado-{id}",
+        "Escribir 2026-10-15 en empleado-fecha-baja",
+        "Pulsar confirmar-baja",
+        "Revisar mensaje-exito y estado-empleado-{id} dentro de tabla-empleados"
+      ],
+      "datos": {"numero_empleado": "EMP-0005", "fecha_baja": "2026-10-15", "estado_visible": "Baja"},
+      "resultado_esperado": "Se muestra mensaje-exito; estado-empleado-{id} dice 'Baja' y la fila sigue en tabla-empleados."
+    },
+    {
+      "id": "CP-11",
+      "escenario": "Rechazar una fecha de baja anterior a la fecha de ingreso",
+      "nivel": "api",
+      "precondiciones": ["Existe el empleado activo EMP-0006 con fecha de ingreso 2024-03-01"],
+      "pasos": [
+        "Enviar la solicitud de baja con fecha_baja 2024-02-28",
+        "Verificar código y detalle",
+        "Hacer GET /api/empleados/{id}"
+      ],
+      "datos": {"numero_empleado": "EMP-0006", "fecha_ingreso": "2024-03-01", "fecha_baja": "2024-02-28", "codigo_esperado": "422", "estado_esperado": "activo", "fecha_baja_esperada": ""},
+      "resultado_esperado": "Responde 422 con detail que menciona fecha_baja; el empleado sigue 'activo' y sin fecha de baja."
+    },
+    {
+      "id": "CP-12",
+      "escenario": "Rechazar una fecha de baja anterior a la fecha de ingreso",
+      "nivel": "e2e",
+      "precondiciones": ["Empleado activo EMP-0006 (ingreso 2024-03-01) en el directorio"],
+      "pasos": [
+        "Pulsar baja-empleado-{id} del empleado EMP-0006",
+        "Escribir 2024-02-28 en empleado-fecha-baja",
+        "Pulsar confirmar-baja",
+        "Revisar mensaje-error y estado-empleado-{id}"
+      ],
+      "datos": {"numero_empleado": "EMP-0006", "fecha_baja": "2024-02-28", "campo_a_corregir": "fecha_baja", "estado_visible": "Activo"},
+      "resultado_esperado": "mensaje-error indica que se debe corregir el campo fecha_baja; estado-empleado-{id} sigue 'Activo'."
+    },
+    {
+      "id": "CP-13",
+      "escenario": "No se puede editar a un empleado dado de baja",
+      "nivel": "api",
+      "precondiciones": ["Existe el empleado EMP-0007 en estado baja con puesto Analista"],
+      "pasos": [
+        "Enviar PUT /api/empleados/{id} con puesto 'Gerente'",
+        "Verificar código y mensaje",
+        "Hacer GET /api/empleados/{id}"
+      ],
+      "datos": {"numero_empleado": "EMP-0007", "puesto": "Gerente", "codigo_esperado": "409", "mensaje_esperado": "No se puede editar a un empleado dado de baja", "puesto_conservado": "Analista"},
+      "resultado_esperado": "Responde 409 con detail 'No se puede editar a un empleado dado de baja'; el puesto sigue siendo Analista."
+    },
+    {
+      "id": "CP-14",
+      "escenario": "No se puede editar a un empleado dado de baja",
+      "nivel": "e2e",
+      "precondiciones": ["Empleado EMP-0007 en estado Baja (Analista) en el directorio"],
+      "pasos": [
+        "Pulsar editar-empleado-{id} del empleado EMP-0007",
+        "Escribir 'Gerente' en empleado-puesto",
+        "Pulsar empleado-guardar",
+        "Revisar mensaje-error y la fila fila-empleado-{id}"
+      ],
+      "datos": {"numero_empleado": "EMP-0007", "puesto": "Gerente", "mensaje_esperado": "No se puede editar a un empleado dado de baja", "puesto_conservado": "Analista"},
+      "resultado_esperado": "mensaje-error muestra 'No se puede editar a un empleado dado de baja'; la fila conserva el puesto Analista."
+    }
+  ]
+}

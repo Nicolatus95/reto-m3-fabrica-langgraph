@@ -89,7 +89,7 @@ def diff_de(raiz: Path, base: str, rastreados: list[str], nuevos: list[str]) -> 
 def _ruff(raiz: Path, config: Path, ruta: str, contenido: str) -> dict[str, tuple[int, str]]:
     """Hallazgos de ruff por regla → (conteo, mensaje). El contenido va por stdin con el nombre real del archivo."""
     r = subprocess.run([sys.executable, "-m", "ruff", "check", "--config", str(config), "--output-format", "json",
-                        "--no-cache", "--stdin-filename", ruta, "-"], input=contenido, cwd=raiz, capture_output=True,
+                        "--no-cache", "--ignore-noqa", "--stdin-filename", ruta, "-"], input=contenido, cwd=raiz, capture_output=True,
                        text=True, encoding="utf-8", errors="replace", check=False)
     try:
         datos = json.loads(r.stdout or "[]")
@@ -110,7 +110,7 @@ def _bandit(ruta: str, contenido: str) -> dict[str, tuple[int, str]]:
     with tempfile.TemporaryDirectory() as carpeta:
         archivo = Path(carpeta) / Path(ruta).name
         archivo.write_text(contenido, encoding="utf-8")
-        r = subprocess.run([sys.executable, "-m", "bandit", "-ll", "-q", "-f", "json", str(archivo)],
+        r = subprocess.run([sys.executable, "-m", "bandit", "-ll", "-q", "--ignore-nosec", "-f", "json", str(archivo)],
                            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     try:
         resultados = json.loads(r.stdout)["results"]

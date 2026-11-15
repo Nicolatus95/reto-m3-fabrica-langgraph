@@ -107,6 +107,33 @@ def test_bandit_nuevo_rechaza_como_seguridad(repo, revisor):
     assert [o.categoria for o in r.observaciones] == ["seguridad"] and "bandit" in r.observaciones[0].detalle
 
 
+def test_nosec_no_silencia_a_bandit(repo, revisor):
+    """El código revisado no puede apagar la capa estática con un comentario."""
+    real, modelo = revisor
+    escribir(repo, "app/backend/malo.py", "def f(x):\n    return eval(x)  # nosec\n")
+    r = real(HU, repo.base)
+    assert r.veredicto == "rechazada" and not modelo.llamadas
+    assert r.observaciones[0].categoria == "seguridad" and "B307" in r.observaciones[0].detalle
+
+
+def test_noqa_no_silencia_a_ruff(repo, revisor):
+    real, modelo = revisor
+    escribir(repo, "app/backend/nuevo.py", "import os  # noqa: F401\n")
+    r = real(HU, repo.base)
+    assert r.veredicto == "rechazada" and not modelo.llamadas and "F401" in r.observaciones[0].detalle
+
+
+def test_un_noqa_que_ya_estaba_en_la_base_no_es_hallazgo_nuevo(repo, revisor):
+    """Se ignoran los comentarios en las DOS corridas (base y actual): la comparación sigue siendo justa."""
+    real, modelo = revisor
+    escribir(repo, "app/backend/viejo.py", "import os  # noqa: F401\n")
+    repo.git("add", "-A")
+    repo.git("commit", "-q", "-m", "viejo con noqa")
+    base = repo.git("rev-parse", "HEAD")
+    escribir(repo, "app/backend/viejo.py", "import os  # noqa: F401\n\ny = 2\n")
+    assert real(HU, base).veredicto == "aprobada" and len(modelo.llamadas) == 1
+
+
 def test_si_la_capa_estatica_falla_se_escala(repo, revisor):
     _, modelo = revisor
     escribir(repo, "app/backend/nuevo.py", "x = 1\n")

@@ -36,6 +36,7 @@ from langgraph.types import Command, interrupt
 
 import verificacion
 from flujos import claude
+from flujos.documentador import DocumentadorReal, ResultadoDocumentacion
 from flujos.revisor import ResultadoRevision, RevisorReal, formatear_observaciones
 from validadores.contratos import Diagnostico, Observacion, preguntas_abiertas
 from validadores.validar import problemas_de
@@ -58,7 +59,7 @@ ESCALAR = "ESCALAR A UNA PERSONA"
 MODELOS = {
     "filtrar": "haiku", "criterios": "sonnet", "casos": "sonnet", "plan": "sonnet",
     "construir": "sonnet", "desplegar": "sonnet", "automatizar": "sonnet", "triage": "sonnet",
-    "revisar": "sonnet",
+    "revisar": "sonnet", "documentar": "haiku",
 }
 
 
@@ -86,6 +87,7 @@ class Estado(TypedDict, total=False):
     instruccion: str                 # qué debe corregir el responsable (diagnóstico del triage u observaciones)
     revisiones: int                  # ciclos de corrección por rechazo del revisor
     revision_ok: bool
+    documentacion_ok: bool           # documentacion.md escrito en esta corrida
     estado_final: str
     costo_usd: Annotated[float, operator.add]
     bitacora: Annotated[list[str], operator.add]
@@ -103,13 +105,15 @@ class Servicios:
     app: Path                                                   # carpeta app/ cuyos cambios vigila construir
     registros: Path                                             # detalle de seguridad: ningún rol de hooks/roles.py lo lee
     revisor: Callable[[str, str], ResultadoRevision]            # (hu, commit base) -> ResultadoRevision
+    documentador: Callable[[str, str], ResultadoDocumentacion]  # (hu, commit base) -> ResultadoDocumentacion
 
 
 def servicios_reales() -> Servicios:
     """Servicios de verdad: `claude -p`, las verificaciones de verificacion/, el revisor real y salida/ del proyecto."""
     return Servicios(ejecutar=claude.ejecutar, verificar=verificacion.verificar, salida=RAIZ / "salida",
                      app=RAIZ / "app", registros=RAIZ / "registros",
-                     revisor=RevisorReal(ejecutar=claude.ejecutar, raiz=RAIZ, modelo=MODELOS["revisar"]))
+                     revisor=RevisorReal(ejecutar=claude.ejecutar, raiz=RAIZ, modelo=MODELOS["revisar"]),
+                     documentador=DocumentadorReal(ejecutar=claude.ejecutar, raiz=RAIZ, modelo=MODELOS["documentar"]))
 
 
 def _git_raiz(*args: str, raiz: Path = RAIZ) -> subprocess.CompletedProcess:
@@ -448,6 +452,27 @@ def nodo_revisar(sv: Servicios, s: Estado) -> dict:
             "bitacora": [f"Revisión: rechazada ({len(r.observaciones)} observaciones)"]}
 
 
+def nodo_documentar(sv: Servicios, s: Estado) -> dict:
+    """Documentación de la historia, DESPUÉS de la revisión aprobada: el código arma salida/HU-xx/documentacion.md.
+
+    El modelo solo aporta campos acotados (flujos/documentador.py); ausente o inválido → ESCALAR con un motivo fijo,
+    sin reintentos. Al registro de seguridad va solo un evento con booleanos y un conteo.
+    """
+    hu = s["hu"]
+    r = sv.documentador(hu, s.get("base", ""))
+    eventos = registrar_seguridad(sv, hu, [{"evento": "documentacion", "generada": bool(r.markdown),
+                                            "modelo_llamado": r.modelo_llamado, "no_verificados": r.no_verificados}])
+    if not r.markdown:
+        return {"estado_final": ESCALAR, "costo_usd": r.costo, "eventos_seguridad": eventos,
+                "bitacora": [f"Documentación: ESCALAR · {r.motivo}"]}
+    carpeta = sv.salida / hu
+    carpeta.mkdir(parents=True, exist_ok=True)
+    (carpeta / "documentacion.md").write_text(r.markdown, encoding="utf-8")
+    pendientes = f" ({r.no_verificados} sin verificar)" if r.no_verificados else ""
+    return {"documentacion_ok": True, "costo_usd": r.costo, "eventos_seguridad": eventos,
+            "bitacora": [f"Documentación escrita en documentacion.md{pendientes}"]}
+
+
 def nodo_reporte(sv: Servicios, s: Estado) -> dict:
     """Escribe salida/HU-xx/reporte.md: estado, ciclos, costo, seguridad, bitácora y último log de e2e."""
     estado = s.get("estado_final") or (LISTA if s.get("e2e_ok") and s.get("revision_ok") else ESCALAR)
@@ -463,6 +488,8 @@ def nodo_reporte(sv: Servicios, s: Estado) -> dict:
     lineas += ["- (sin eventos)"] if not eventos else []
     lineas += ["", "Detalle en registros/seguridad.jsonl", "", "## Bitácora", *[f"- {b}" for b in s.get("bitacora", [])],
                "", "## Última ejecución de pruebas", "```", s.get("log_e2e", "(no se ejecutaron)"), "```", ""]
+    if s.get("documentacion_ok"):                   # de ESTA corrida: un archivo viejo no cuenta
+        lineas += ["## Documentación", "", "[documentacion.md](documentacion.md)", ""]
     if s.get("log_correccion"):
         lineas += ["## Corrección de código que no pasó", "```", ultimas_lineas(s["log_correccion"]), "```", ""]
     (carpeta / "reporte.md").write_text("\n".join(lineas), encoding="utf-8")
@@ -500,10 +527,10 @@ def tras_e2e(s: Estado) -> str:
 
 
 def tras_revisar(s: Estado) -> str:
-    """Revisión aprobada o estado final → reporte; rechazada con ciclo disponible → corregir el código."""
-    if s.get("estado_final") or s.get("revision_ok"):
+    """Estado final → reporte; revisión aprobada → documentar; rechazada con ciclo disponible → corregir el código."""
+    if s.get("estado_final"):
         return "reporte"
-    return "corregir_codigo"
+    return "documentar" if s.get("revision_ok") else "corregir_codigo"
 
 
 # --- Grafo -------------------------------------------------------------------------------------------
@@ -515,7 +542,7 @@ def construir_grafo(sv: Servicios, checkpointer) -> CompiledStateGraph:
              "construir": nodo_construir, "desplegar": nodo_desplegar, "automatizar": nodo_automatizar,
              "listo": nodo_listo, "e2e": nodo_e2e, "corregir_codigo": nodo_corregir_codigo,
              "corregir_pruebas": nodo_corregir_pruebas, "corregir_despliegue": nodo_corregir_despliegue,
-             "revisar": nodo_revisar, "reporte": nodo_reporte}
+             "revisar": nodo_revisar, "documentar": nodo_documentar, "reporte": nodo_reporte}
     for nombre, fn in nodos.items():
         g.add_node(nombre, lambda s, fn=fn: fn(sv, s))
     g.add_node("triage", lambda s: nodo_triage(sv, s),
@@ -535,7 +562,8 @@ def construir_grafo(sv: Servicios, checkpointer) -> CompiledStateGraph:
     g.add_conditional_edges("corregir_codigo", ruta_a("e2e"), ["e2e", "reporte"])   # no sigue a ciegas si falló
     for correccion in ("corregir_pruebas", "corregir_despliegue"):
         g.add_edge(correccion, "e2e")                                   # el ciclo: corregir y volver a probar
-    g.add_conditional_edges("revisar", tras_revisar, ["corregir_codigo", "reporte"])
+    g.add_conditional_edges("revisar", tras_revisar, ["corregir_codigo", "documentar", "reporte"])
+    g.add_edge("documentar", "reporte")
     g.add_edge("reporte", END)
     return g.compile(checkpointer=checkpointer)
 
@@ -616,6 +644,7 @@ class Escenario:
     revisor_rechazos: int = 0                # veces que el revisor rechaza (capa LLM)
     revisor_estatico_rechaza: bool = False   # el revisor rechaza una vez en la capa estática (sin llamar al modelo)
     revisor_salida_invalida: bool = False    # la salida del revisor no valida contra Revision: debe escalar
+    documentar_invalido: bool = False        # la salida del documentador no valida: debe escalar
     correccion_sin_cambios: bool = False     # el desarrollador «corrige» sin tocar app/ (la construcción inicial sí)
     app_falla_tras_correccion: bool = False  # la app no verifica después de corregir el código
     redespliegue_falla: bool = False         # el redespliegue falla después de corregir el código
@@ -635,6 +664,7 @@ PRESETS = {
     "revisor_rechaza": Escenario(revisor_rechazos=1),
     "revisor_estatico_rechaza": Escenario(revisor_estatico_rechaza=True),
     "revisor_salida_invalida": Escenario(revisor_salida_invalida=True),
+    "documentar_invalido": Escenario(documentar_invalido=True),
 }
 
 _GHERKIN = """# language: es
@@ -664,12 +694,13 @@ class Ensayo:
         self.modelos: list[str] = []
         self.verificaciones: list[str] = []
         self.bases: list[str] = []          # el commit base que el grafo le pasó al revisor en cada revisión
+        self.documentaciones: list[str] = []    # el commit base de cada llamada al documentador
         self._fallos = {"app": 0, "e2e": 0, "revision": 0, "versiones": 0}
 
     def servicios(self) -> Servicios:
-        """Los Servicios que usa el grafo, con el revisor doble."""
+        """Los Servicios que usa el grafo, con el revisor y el documentador dobles."""
         return Servicios(ejecutar=self.ejecutar, verificar=self.verificar, salida=self.salida, app=self.app,
-                         registros=self.registros, revisor=self.revisor)
+                         registros=self.registros, revisor=self.revisor, documentador=self.documentador)
 
     def _escribir(self, ruta: Path, texto: str) -> None:
         """Escribe un archivo garantizando que su mtime avance (el grafo lo compara)."""
@@ -750,6 +781,15 @@ class Ensayo:
                 archivo="app/backend/main.py", categoria="regla_negocio",
                 detalle="falta validar el correo en el backend")], modelo_llamado=True, costo=0.01)
         return ResultadoRevision("aprobada", modelo_llamado=True, costo=0.01)
+
+    def documentador(self, hu: str, base: str) -> ResultadoDocumentacion:
+        """Doble del documentador: deja un documento fijo, o escala con un motivo fijo si el Escenario lo pide."""
+        self.documentaciones.append(base)
+        if self.esc.documentar_invalido:
+            return ResultadoDocumentacion(motivo="salida del documentador ausente o inválida", modelo_llamado=True,
+                                          costo=0.01)
+        return ResultadoDocumentacion(markdown=f"# Documentación · {hu}\n\n(documento de ensayo)\n",
+                                      modelo_llamado=True, costo=0.01)
 
 
 # --- CLI ---------------------------------------------------------------------------------------------

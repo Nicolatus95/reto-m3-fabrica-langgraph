@@ -5,7 +5,7 @@ el modelo propone y el CÓDIGO decide si el resultado es válido. Estas funcione
 ningún modelo: reciben texto y devuelven la lista de problemas (vacía = válido).
 """
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -101,6 +101,26 @@ class Revision(BaseModel):
 
     aprobado: bool
     observaciones: list[Observacion] = Field(max_length=5)
+
+
+class Endpoint(BaseModel):
+    """Un endpoint que el modelo dice que la historia agregó o cambió. El código verifica método y ruta."""
+    model_config = ConfigDict(extra="forbid")
+
+    metodo: Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+    ruta: str = Field(max_length=120)
+    descripcion: str = Field(max_length=300)
+
+
+class Documentacion(BaseModel):
+    """Lo que entrega el documentador. Python arma el archivo; el modelo solo aporta estos campos acotados."""
+    model_config = ConfigDict(extra="forbid")
+
+    resumen: str = Field(max_length=600)
+    endpoints: list[Endpoint] = Field(max_length=10)
+    reglas_cubiertas: list[int] = Field(max_length=12)
+    como_probar: list[Annotated[str, Field(max_length=200)]] = Field(max_length=8)
+    limitaciones: list[Annotated[str, Field(max_length=200)]] = Field(max_length=5)
 
 
 def validar_json(contrato: type[BaseModel], texto: str) -> list[str]:

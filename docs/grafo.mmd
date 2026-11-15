@@ -20,6 +20,7 @@ graph TD;
 	corregir_pruebas(corregir_pruebas)
 	corregir_despliegue(corregir_despliegue)
 	revisar(revisar)
+	documentar(documentar)
 	reporte(reporte)
 	triage(triage)
 	__end__([<p>__end__</p>]):::last
@@ -40,6 +41,7 @@ graph TD;
 	desplegar --> listo;
 	disenar -.-> planificar;
 	disenar -.-> reporte;
+	documentar --> reporte;
 	e2e -.-> reporte;
 	e2e -.-> revisar;
 	e2e -.-> triage;
@@ -52,6 +54,7 @@ graph TD;
 	preguntas -.-> disenar;
 	preguntas -.-> reporte;
 	revisar -.-> corregir_codigo;
+	revisar -.-> documentar;
 	revisar -.-> reporte;
 	triage -.-> corregir_codigo;
 	triage -.-> corregir_despliegue;

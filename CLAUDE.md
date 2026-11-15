@@ -39,6 +39,11 @@ cambio
   `flujos/claude.py`, sin API key.
 - Cada nodo se juzga por su artefacto (existe, cambió y valida), nunca por `is_error`.
 - Cada llamada fija su modelo: tabla `MODELOS` en `flujos/fabrica.py`.
+- Después de `revisar` (aprobada) corre el nodo `documentar` (`flujos/documentador.py`, modelo haiku, sin
+  herramientas): el modelo solo aporta campos acotados (`Documentacion`) y Python arma
+  `salida/HU-xx/documentacion.md`. El código verifica los endpoints contra el OpenAPI de la app desplegada (con el
+  diff de respaldo si no responde) y las reglas contra `contexto/reglas_negocio.md`; lo no verificable se marca
+  «(no verificado)». Una salida ausente o inválida escala, sin reintentos.
 - `--ensayo` y `tests/` prueban las rutas del grafo sin costo (dobles, sin modelo ni Docker).
 - `registros/` es solo para personas y **ningún agente la lee, tampoco el principal**. El bloqueo está en
   `hooks/seguridad.py` (aplica a todos): Read/Glob/Grep sobre `registros/` y cualquier comando de Bash que la

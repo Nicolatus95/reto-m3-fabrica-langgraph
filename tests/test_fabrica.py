@@ -93,8 +93,8 @@ def test_lista(montar):
     assert set(m.ensayo.modelos) <= set(MODELOS.values()) and dict(zip(m.ensayo.prompts, m.ensayo.modelos, strict=True))[
         m.ensayo.prompts[0]] == "haiku"
     assert not prompts_de(m, "/triage")
-    assert v["bitacora"][-1].startswith("Revisión")           # la revisión va al final, tras e2e OK
-    assert [e["evento"] for e in eventos(m)] == ["defensas", "veredicto", "revision"]
+    assert v["bitacora"][-2].startswith("Revisión") and v["bitacora"][-1].startswith("Documentación")  # tras e2e OK
+    assert [e["evento"] for e in eventos(m)] == ["defensas", "veredicto", "revision", "documentacion"]
 
 
 def test_bloqueada(montar):
@@ -389,3 +389,59 @@ def test_el_ensayo_no_exige_app_limpia(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(tempfile, "mkdtemp", lambda prefix="": str(tmp_path))
     monkeypatch.setattr(fabrica, "precondicion_app", lambda: "sucia")
     assert main([HISTORIA, "--ensayo", "--aprobar"]) == 0
+
+
+# --- Nodo documentar --------------------------------------------------------------------------------------------
+def test_documentar_escribe_el_documento_y_el_reporte_lo_enlaza(montar):
+    m = montar()
+    v = correr_fabrica(m)
+    assert v["estado_final"] == LISTA and v["documentacion_ok"] is True
+    assert "(documento de ensayo)" in (m.salida / "HU-01" / "documentacion.md").read_text(encoding="utf-8")
+    assert "[documentacion.md](documentacion.md)" in (m.salida / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+    assert m.ensayo.documentaciones == [""]                     # el commit base llega al documentador
+
+
+def test_documentar_invalido_escala_sin_documento(montar):
+    m = montar(Escenario(documentar_invalido=True))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == ESCALAR and not v.get("documentacion_ok")
+    assert not (m.salida / "HU-01" / "documentacion.md").exists()
+    assert any("Documentación: ESCALAR · salida del documentador ausente o inválida" in b for b in v["bitacora"])
+    assert "documentacion.md" not in (m.salida / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+
+
+def test_el_reporte_no_enlaza_un_documento_de_una_corrida_anterior(montar):
+    m = montar(Escenario(documentar_invalido=True))
+    (m.salida / "HU-01").mkdir(parents=True, exist_ok=True)
+    (m.salida / "HU-01" / "documentacion.md").write_text("viejo", encoding="utf-8")
+    correr_fabrica(m)
+    assert "documentacion.md" not in (m.salida / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+
+
+def test_no_se_documenta_si_el_revisor_escala(montar):
+    m = montar(Escenario(revisor_salida_invalida=True))
+    correr_fabrica(m)
+    assert m.ensayo.documentaciones == []
+
+
+def test_la_documentacion_va_despues_de_la_revision_del_ciclo(montar):
+    m = montar(Escenario(revisor_rechazos=1))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == LISTA and len(m.ensayo.documentaciones) == 1        # una sola vez, tras aprobar
+    assert "documentacion" in [e["evento"] for e in eventos(m)]
+
+
+def test_el_evento_de_documentacion_solo_lleva_booleanos_y_conteos(montar):
+    m = montar()
+    correr_fabrica(m)
+    evento = [e for e in eventos(m) if e["evento"] == "documentacion"][0]
+    assert evento["generada"] is True and evento["no_verificados"] == 0 and "markdown" not in evento
+
+
+def test_el_modelo_de_documentar_es_haiku():
+    assert MODELOS["documentar"] == "haiku"
+
+
+def test_el_diagrama_tiene_documentar_entre_revisar_y_reporte(montar):
+    texto = montar().app.get_graph().draw_mermaid()
+    assert "documentar" in texto

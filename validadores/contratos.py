@@ -91,7 +91,7 @@ class Observacion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     archivo: str = Field(max_length=120)
-    categoria: Literal["seguridad", "correctitud", "regla_negocio", "estilo"]
+    categoria: Literal["seguridad", "corrección", "regla_negocio", "estilo"]
     detalle: str = Field(max_length=300)
 
 

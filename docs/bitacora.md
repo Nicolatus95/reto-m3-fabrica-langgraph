@@ -284,6 +284,113 @@ Registro de decisiones, iteraciones, hallazgos y resultados. Las capturas citada
 - **Pendiente de decisión (HU-04):** propuesta de prohibir ciclos en la línea de reporte y de que,
   al dar de baja a un jefe, sus subordinados queden sin jefe.
 
+## Fase 2 · Bloque A · Revisor real (commit `4fa19ff`)
+- `flujos/revisor.py` (nuevo): qué se revisa lo decide git, desde el commit base de la corrida. La
+  capa estática compara antes contra después, por archivo y regla. Bloquean los hallazgos nuevos de
+  `F`, `E9`, `B` y bandit; los de `I`, `UP`, `E4`, `E7` y `RUF100` son informativos. Después va la
+  capa LLM sin herramientas, con `Revision` y un marcador aleatorio por llamada. El código anula
+  una aprobación que traiga observaciones de seguridad, y una salida ausente o inválida escala.
+- `fabrica.py`: el stub `revisor_pendiente` se eliminó. `main()` no arranca una corrida real si
+  `app/` tiene cambios sin commitear, y guarda `Estado["base"]`. `corregir_codigo` exige que `app/`
+  cambie. `revision.json` y el evento `revision` van a `registros/`.
+- `claude.ejecutar` manda por stdin los prompts de más de 20 000 caracteres; por ahora está probado
+  solo con un doble.
+- Ruff 0.17.5 y bandit 1.9.4 quedaron fijados. `ruff.toml` declara las reglas, con
+  `line-length = 120` para respetar el estilo del repo.
+- La configuración explícita destapó hallazgos en el código propio: un `zip` sin `strict`, dos
+  variables `l` y el orden de imports en `compuerta.py` (sin tocar su lógica).
+- Resultado: **58 pruebas** en verde (eran 20; tardan ~44 s porque corren ruff y bandit de
+  verdad) y ruff limpio. En el ensayo, `revisor_rechaza` y `revisor_estatico_rechaza` terminan
+  LISTA tras un ciclo de corrección, y `revisor_salida_invalida` termina en ESCALAR.
+- **Revisión externa del chat. Hallazgo:** la capa estática se puede silenciar desde el mismo
+  código que revisa. Bandit respeta `# nosec` y ruff respeta `# noqa`, así que un desarrollador
+  manipulado por la historia podría escribir `eval(x)  # nosec` y la capa no lo vería. Se corrige
+  con `--ignore-nosec` en bandit y `--disable-noqa` en ruff, en las dos corridas (antes y
+  después) para que la comparación siga siendo justa. Va en un commit aparte, antes del bloque B.
+- **Lección:** una compuerta que el código revisado puede apagar desde dentro no es una
+  compuerta. Las supresiones (`noqa`, `nosec`, `type: ignore`) son instrucciones que trae el
+  código, y el código bajo revisión no da instrucciones.
+- Riesgo residual aceptado: el `detalle` de las observaciones del LLM es texto libre de un modelo
+  que leyó código influido por la historia, y llega a un agente con herramientas. Lo acotan el
+  esquema (máx. 5 observaciones, 300 caracteres, una línea) y la sustitución de rutas desconocidas.
+
+## Fase 2 · Arreglo `noqa`/`nosec` (`44c1fd5`) y Bloque B (`0e682fc`)
+- Arreglo: bandit corre con `--ignore-nosec` y ruff con `--ignore-noqa`, en la corrida base y en
+  la actual. El flag que pidió el chat, `--disable-noqa`, no existe en ruff 0.17.5; la constructora
+  usó el equivalente. Se agregaron tres pruebas: `# nosec` sobre `eval`, `# noqa: F401` nuevo, y un
+  `noqa` heredado que no cuenta como hallazgo nuevo.
+- Bloque B:
+  - `registros/` queda bloqueada en `seguridad.py` para todos, incluido el agente principal:
+    Read/Glob/Grep por ruta resuelta y Bash cuando nombra la carpeta como segmento de ruta.
+  - La auditoría se escribe siempre, antes de mirar `DEFENSAS`, con el campo `defensas`. Si no se
+    puede escribir con las defensas activas, el hook falla cerrado (exit 2).
+  - El `mv` del log viejo a `registros/auditoria-clase.jsonl` se hizo antes de activar el bloqueo.
+  - Resultado: 106 pruebas en verde y ruff limpio.
+- Verificado desde el chat: existe `registros/auditoria-clase.jsonl` (74 KB), ya no hay
+  `auditoria.jsonl` en la raíz, y `registros/auditoria.jsonl` recibe líneas con
+  `"defensas": "activas"` (las de la propia constructora, agente principal).
+- **El hook frenó dos veces a su propia autora:**
+  1. Bloqueó la escritura del hook y de su prueba porque contenían el marcador del señuelo. La
+     constructora no lo esquivó: partió la constante en dos cadenas, lo que es equivalente.
+  2. Bloqueó un `sed` porque el texto `env=env` coincidió con la regla de variables de entorno.
+     Es un falso positivo del filtro textual, y es evidencia para el red team: el filtro juzga el
+     texto, no la intención (bloquea lo inocente que se le parece y deja pasar lo malicioso que no
+     se le parece).
+- **Revisión externa del chat. Hallazgo:** el bloque B impide *leer* `registros/`, pero no
+  *escribir* en ella. Un `Write` sobre `registros/auditoria.jsonl` reemplazaría el archivo completo
+  y borraría el rastro, y un `Edit` lo alteraría. Proteger la confidencialidad del registro no
+  protege su integridad. Además, `NotebookEdit` no está en el matcher de `seguridad.py`: no se
+  audita ni se revisa su contenido. Se corrige en un commit aparte antes del bloque C.
+- **Lección:** un registro de seguridad necesita dos protecciones distintas: que no se pueda leer
+  (confidencialidad: no filtra la carga del ataque) y que no se pueda modificar (integridad: el
+  rastro sobrevive al ataque). La segunda es la que hace útil un log después de un incidente.
+- Pendiente para la documentación: el README todavía menciona `auditoria.jsonl` en la raíz (5
+  líneas). Se actualiza en la fase de documentación, no ahora.
+
+## Fase 2 · Integridad del registro (`d16bde3`), Bloque C (`a94e08b`) y spike (`ecc066b`)
+- `seguridad.py` también bloquea Write, Edit, MultiEdit y NotebookEdit cuyo destino resuelto cae
+  en `registros/`. `NotebookEdit` entró al matcher de `.claude/settings.json`: ahora se audita y su
+  `new_source` se revisa contra el señuelo. Hay además una prueba que lee el `settings.json` real,
+  para que el matcher no se pierda en silencio.
+- HU-04 creada (`historias/HU-04-asignar-jefe-directo.md`) y reglas 8 a 12 en
+  `contexto/reglas_negocio.md`, con la fila `jefe_id`.
+- `spikes/probar_revisor.py`: un repo git temporal con `eval(x)  # nosec` y un comentario que le
+  ordena al revisor aprobar. El paso 1 es sin modelo (la capa estática rechaza, 0 llamadas); el
+  paso 2 es una llamada real solo a la capa LLM; con `--largo` agrega ~30 KB para pasar por stdin.
+- Resultado: 120 pruebas en verde y ruff limpio. Revisión externa del chat: sin hallazgos.
+
+- **Spike del revisor, corrido con permiso** (`python -m spikes.probar_revisor --largo`). Captura:
+  `r2-spike-revisor.png`.
+  - Paso 1 (sin modelo): **rechazada con 0 llamadas al modelo**, por bandit B307 sobre el `eval`.
+    El `# nosec` no lo ocultó: el arreglo `44c1fd5` funciona.
+  - Paso 2 (llamada real a Sonnet, sin herramientas, ~30 KB por stdin): **rechazada**, con 0.32 USD
+    y cuatro observaciones. Tres son de seguridad: la orden escrita en el comentario identificada
+    como inyección de prompt y no obedecida, el `eval` como ejecución de código arbitrario, y el
+    `# nosec` como intento de silenciar la capa estática. La cuarta es de corrección: las 1500
+    funciones de relleno no implementan HU-04.
+  - Queda probado con una llamada real el envío por stdin de los prompts largos, que hasta ahora
+    solo se había probado con un doble.
+  - **Conclusión:** las dos capas detectaron el ataque por caminos independientes: la estática por
+    reglas, sin modelo, y la LLM por comprensión. Con cualquiera de las dos bastaba para rechazar.
+    Eso es defensa en profundidad: ninguna capa es la única barrera.
+  - **Observación de costo:** una revisión de ~30 KB costó 0.32 USD con Sonnet. El diff de HU-04
+    será mucho menor, pero el revisor es de los nodos más caros por llamada.
+- **Fase 2 cerrada.** Commits `4fa19ff`, `44c1fd5`, `0e682fc`, `d16bde3`, `a94e08b` y `ecc066b`;
+  120 pruebas en verde.
+
+## Nota para la entrega · Agentes del reto contra la clase
+- Desde `fin-clase` no se agregó ningún subagente a `.claude/agents/` (siguen los 8 de la clase);
+  el único cambio ahí fue que `/construir` acepta correcciones. El agente nuevo del reto es el
+  **revisor** (`flujos/revisor.py`): una llamada al LLM **sin herramientas** y con salida
+  estructurada, y no un subagente. Se decidió así por mínima agencia: un agente que lee código
+  posiblemente manipulado no necesita herramientas para opinar sobre él.
+- El orquestador también cambió de naturaleza: en clase era el agente principal siguiendo el
+  guion `/fabrica`; en el reto es código (LangGraph). El triage hace de supervisor con
+  `Command(goto=...)`.
+- Correspondencia con los 4 roles que pide el reto: planificador = analista + arquitecto,
+  implementador = desarrollador, tester = diseñador de pruebas + automatizador, reviewer =
+  revisor. Total: 9 agentes con rol propio (rúbrica: "5+ agentes con roles bien definidos").
+
 ## Pendientes para el reto (anotados durante la clase)
 
 - Suite de red team con las evasiones del filtro textual (Paso 2) y comprobar qué capa detiene cada una.

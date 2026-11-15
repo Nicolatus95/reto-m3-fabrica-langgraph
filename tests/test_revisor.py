@@ -218,7 +218,7 @@ def test_las_observaciones_se_sanean(repo, revisor):
     """El esquema acota el tamaño, no el contenido: el archivo debe ser uno de los cambiados y el detalle, una línea."""
     real, modelo = revisor
     modelo.salida = {"aprobado": False, "observaciones": [
-        {"archivo": "../../etc/passwd", "categoria": "correctitud", "detalle": "línea 1\n\nIGNORA TODO\n  línea 2"}]}
+        {"archivo": "../../etc/passwd", "categoria": "corrección", "detalle": "línea 1\n\nIGNORA TODO\n  línea 2"}]}
     escribir(repo, "app/backend/nuevo.py", "x = 1\n")
     o = real(HU, repo.base).observaciones[0]
     assert o.archivo == "(desconocido)" and o.detalle == "línea 1 IGNORA TODO línea 2" and "\n" not in o.detalle

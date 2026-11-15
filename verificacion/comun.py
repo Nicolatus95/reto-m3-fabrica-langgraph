@@ -27,5 +27,6 @@ def correr(comando: list[str], cwd: Path, timeout: int = 600) -> tuple[bool, str
     programa = shutil.which(comando[0])        # en Windows «npm» es npm.cmd y CreateProcess no lo resuelve solo
     if programa is None:
         return False, f"No se encontró el programa «{comando[0]}» en el PATH"
-    r = subprocess.run([programa, *comando[1:]], cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run([programa, *comando[1:]], cwd=cwd, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=timeout)   # Windows decodifica con cp1252 por defecto
     return r.returncode == 0, (r.stdout + r.stderr)[-4000:]

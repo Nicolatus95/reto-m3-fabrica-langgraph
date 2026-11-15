@@ -40,6 +40,13 @@ cambio
 - Cada nodo se juzga por su artefacto (existe, cambió y valida), nunca por `is_error`.
 - Cada llamada fija su modelo: tabla `MODELOS` en `flujos/fabrica.py`.
 - `--ensayo` y `tests/` prueban las rutas del grafo sin costo (dobles, sin modelo ni Docker).
-- `registros/` es solo para personas: ningún agente la lee (ver `hooks/roles.py`).
+- `registros/` es solo para personas y **ningún agente la lee, tampoco el principal**. El bloqueo está en
+  `hooks/seguridad.py` (aplica a todos): Read/Glob/Grep sobre `registros/` y cualquier comando de Bash que la
+  nombre como ruta (`cat registros/x`, `ls ./registros`) salen con exit 2. `hooks/roles.py` solo la deja fuera de
+  `lee` y no basta: no alcanza al agente principal. Se apaga con `DEFENSAS=0`, como las demás defensas. Para
+  revisar esos archivos, usa tu propia terminal, no un agente.
+- La auditoría de cada herramienta se escribe **siempre**, también con `DEFENSAS=0`, en `registros/auditoria.jsonl`
+  (campo `defensas`: `activas`/`apagadas`). La ruta es fija: no se puede cambiar por variable de entorno. El
+  `auditoria.jsonl` de la raíz, de la clase (trae entradas de HU-99), se movió a `registros/auditoria-clase.jsonl`.
 - `docs/bitacora.md` registra decisiones e iteraciones; la mantiene Nicolas desde el chat de
   planeación: no la edites.

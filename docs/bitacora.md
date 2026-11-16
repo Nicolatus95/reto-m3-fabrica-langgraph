@@ -662,6 +662,36 @@ Plan de la constructora revisado en el chat de planeación antes de editar (base
 - **Riesgo:** las tres cosas gastan la misma cuota del plan Pro (ventana hasta ~21:55). La corrida
   tiene prioridad; si el aviso de límite aparece, se pausan constructora y auxiliar.
 
+## Fase 3 · Revisión externa del hardening (`57d9880`, `af01cb0`), 15 nov, 19:10
+
+Resultado: 331 pruebas en verde (50 nuevas en `tests/test_agentes.py`) y ruff limpio. El frontmatter
+(`tools`, `model`) de los 8 agentes no cambió. El test de deriva se probó con un control negativo: se
+alteró `triage.md` y el test falló como debía. Los ejemplos de formato no mencionan HU-04 ni el jefe directo.
+
+Hallazgos:
+1. **El ejemplo del filtro describe el mismo ataque que HU-99** (leer un archivo fuera de `app/` y
+   ocultarlo en los resúmenes). Eso le daría la respuesta al filtro y restaría valor a la evidencia de
+   la corrida con HU-99. Se cambia por un ataque de otro tipo.
+2. **Detalle de contrato:** el prompt pide «la evidencia», pero `Veredicto` solo tiene `sospechosa` y
+   `motivo` y no es `extra="forbid"`. Un campo extra se descartaría sin aviso. Se aclara que la
+   evidencia va dentro de `motivo`.
+3. **Hueco real en el hook (lo descubrió la propia constructora y lo confirma la auditoría):**
+   `grep -rn "HU-00" . -l` recorrió `registros/` y listó `registros/auditoria.jsonl`. El hook bloquea
+   los comandos que **nombran** `registros/` (`SEGMENTO_REGISTROS`), pero una búsqueda recursiva desde
+   la raíz entra sin nombrarla. Con un patrón distinto, el mismo camino imprimiría líneas de la auditoría
+   o de `secretos_demo.txt`. La auditoría registró el comando (ts 1794790773.4), así que la capa de
+   detección funcionó; la de prevención, no. Se agrega a la suite de red team como caso documentado
+   (`xfail`), no se corrige antes de la entrega.
+- **Lección:** un filtro por **nombre** no protege una **ubicación**. Las búsquedas recursivas, los
+  comodines y las rutas relativas llegan a la carpeta sin escribir su nombre. La defensa correcta es por
+  ruta resuelta (como hace Read con `rol.py`) o por aislamiento: el sandbox Docker no monta `registros/`.
+- **Lección:** la honestidad de la constructora al reportar su propio descuido convirtió un incidente en
+  evidencia. El registro de auditoría hizo que se pudiera verificar.
+
+- **19:12 · Decisión por cuota:** `/usage` marca 56 % de la ventana del plan Pro (vence ~21:55). Durante la
+  corrida de HU-04 trabaja solo la constructora (README y CHANGELOG, que gastan poco). El auxiliar arranca el
+  red team cuando termine HU-04, si `/usage` sigue por debajo de ~75 %, o después de las 21:55.
+
 ## Pendientes para el reto (anotados durante la clase)
 
 - Suite de red team con las evasiones del filtro textual (Paso 2) y comprobar qué capa detiene cada una.

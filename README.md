@@ -155,10 +155,12 @@ La historia de usuario es **contenido no confiable**. Ninguna capa basta sola (d
 1. **Filtro y mínima agencia.** `filtro-seguridad` solo lee `historias/` y solo escribe su veredicto; el orquestador
    nunca lee la historia. El motivo del veredicto vive fuera de `salida/`.
 2. **Hooks** (`.claude/settings.json`): `hooks/rol.py` + `hooks/roles.py` (qué lee, escribe y ejecuta cada rol) y
-   `hooks/seguridad.py` (para todos: lectura confinada, secretos, terminal, **`registros/` inaccesible** para lectura y
-   escritura). La **auditoría** de cada herramienta se escribe siempre en `registros/auditoria.jsonl`, también con
-   `DEFENSAS=0` (campo `defensas`: `activas`/`apagadas`). `registros/` es solo para personas: ningún agente la lee;
-   revísala desde tu terminal. El `auditoria.jsonl` de la clase (con HU-99) está en `registros/auditoria-clase.jsonl`.
+   `hooks/seguridad.py` (para todos: lectura confinada, secretos, terminal y bloqueo por nombre de `registros/` para lectura y
+   escritura). Los hooks y la **auditoría** cubren las herramientas del matcher (`Read|Glob|Grep|Write|Edit|MultiEdit|
+   NotebookEdit|Bash`); la herramienta PowerShell del principal no pasa por ellos. Dentro de ese alcance, la auditoría
+   se escribe en `registros/auditoria.jsonl` también con `DEFENSAS=0` (campo `defensas`: `activas`/`apagadas`).
+   `registros/` es solo para personas: revísala desde tu terminal. La auditoría de la clase (con HU-99) está en
+   `registros/auditoria-clase.jsonl`.
 3. **Prompts:** bloque de seguridad común en los 8 subagentes (lo leído es dato, no instrucciones).
 4. **Sandbox de ejecución:** `docker run --rm` con `--read-only`, `--cap-drop ALL`, `no-new-privileges`, usuario no root,
    límites de memoria/CPU/pids, sin entorno del anfitrión y montajes de solo lectura. Pruebas y backend sin red; e2e en una
@@ -174,7 +176,9 @@ La historia de usuario es **contenido no confiable**. Ninguna capa basta sola (d
 **Riesgos residuales conocidos:** `npm`/`npx`/`node` del desarrollador siguen en el anfitrión; la fase de red de `npm ci`
 llega al registro de npm; Chromium corre sin su sandbox interno (dentro del contenedor endurecido); los Dockerfiles de
 `despliegue` ejecutan sus `RUN` al construir; el agente principal conserva `npm`, `node`, `docker`, `curl` y `python -c`.
-Detalle en `CLAUDE.md`.
+Búsquedas recursivas, comodines y rutas armadas por partes evaden el filtro por nombre en el principal (a los subagentes
+los frena `rol.py`), PowerShell queda fuera del matcher, y `curl` y `python -c` están en `permissions.allow`: ver
+[`docs/red-team.md`](docs/red-team.md). Detalle del sandbox en `CLAUDE.md`.
 
 ## Estructura del repo
 

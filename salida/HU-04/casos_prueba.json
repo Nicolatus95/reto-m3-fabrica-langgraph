@@ -1,0 +1,131 @@
+{
+  "historia": "HU-04",
+  "casos": [
+    {
+      "id": "CP-01",
+      "escenario": "Asignar como jefe a un empleado activo",
+      "nivel": "api",
+      "precondiciones": ["Existe el empleado activo Ana Pérez (EMP-0001, ana.perez@empresa.com)", "Existe el empleado activo Luis Gómez (EMP-0002, luis.gomez@empresa.com) sin jefe"],
+      "pasos": ["Obtener el id de Ana Pérez con GET /api/empleados", "Enviar PUT /api/empleados/{id_luis} con jefe_id igual al id de Ana Pérez", "Consultar GET /api/empleados/{id_luis}"],
+      "datos": {"jefe": "Ana Pérez", "subordinado": "Luis Gómez", "codigo_esperado": "200"},
+      "resultado_esperado": "La API responde 200 y Luis Gómez queda con jefe_id igual al id de Ana Pérez."
+    },
+    {
+      "id": "CP-02",
+      "escenario": "Asignar como jefe a un empleado activo",
+      "nivel": "e2e",
+      "precondiciones": ["Existen Ana Pérez (EMP-0001) y Luis Gómez (EMP-0002) activos, Luis sin jefe", "El directorio está abierto en http://localhost:8080"],
+      "pasos": ["Pulsar editar-empleado-{id_luis}", "Elegir a Ana Pérez como jefe en el selector de jefe del formulario (el testid del selector no está definido en las convenciones)", "Pulsar empleado-guardar", "Verificar mensaje-exito", "Verificar fila-empleado-{id_luis} en tabla-empleados"],
+      "datos": {"jefe": "Ana Pérez", "subordinado": "Luis Gómez", "codigo_esperado": "200"},
+      "resultado_esperado": "Se muestra mensaje-exito y la fila de Luis Gómez refleja a Ana Pérez como jefe."
+    },
+    {
+      "id": "CP-03",
+      "escenario": "Ver el nombre del jefe en el directorio",
+      "nivel": "api",
+      "precondiciones": ["Ana Pérez activa", "Luis Gómez activo con jefe_id igual al id de Ana Pérez"],
+      "pasos": ["Enviar GET /api/empleados", "Localizar a Luis Gómez en la respuesta", "Comprobar que su jefe_id coincide con el id de Ana Pérez"],
+      "datos": {"jefe": "Ana Pérez", "subordinado": "Luis Gómez", "codigo_esperado": "200"},
+      "resultado_esperado": "La API responde 200 y el registro de Luis Gómez expone a Ana Pérez como su jefe."
+    },
+    {
+      "id": "CP-04",
+      "escenario": "Ver el nombre del jefe en el directorio",
+      "nivel": "e2e",
+      "precondiciones": ["Ana Pérez activa", "Luis Gómez activo con jefe Ana Pérez"],
+      "pasos": ["Abrir el directorio de empleados", "Esperar tabla-empleados", "Localizar fila-empleado-{id_luis}", "Leer el texto de la columna de jefe de esa fila"],
+      "datos": {"jefe_esperado_en_fila": "Ana Pérez", "subordinado": "Luis Gómez"},
+      "resultado_esperado": "La fila de Luis Gómez muestra el nombre Ana Pérez como su jefe."
+    },
+    {
+      "id": "CP-05",
+      "escenario": "Quitar el jefe de un empleado",
+      "nivel": "api",
+      "precondiciones": ["Ana Pérez activa", "Luis Gómez activo con jefe Ana Pérez"],
+      "pasos": ["Enviar PUT /api/empleados/{id_luis} con jefe_id nulo", "Consultar GET /api/empleados/{id_luis}"],
+      "datos": {"jefe_id": "", "subordinado": "Luis Gómez", "codigo_esperado": "200"},
+      "resultado_esperado": "La API responde 200 y Luis Gómez queda con jefe_id vacío."
+    },
+    {
+      "id": "CP-06",
+      "escenario": "Quitar el jefe de un empleado",
+      "nivel": "e2e",
+      "precondiciones": ["Luis Gómez activo con jefe Ana Pérez"],
+      "pasos": ["Pulsar editar-empleado-{id_luis}", "Dejar el selector de jefe en vacío (testid no definido en las convenciones)", "Pulsar empleado-guardar", "Verificar mensaje-exito", "Revisar fila-empleado-{id_luis}"],
+      "datos": {"subordinado": "Luis Gómez", "jefe_mostrado": ""},
+      "resultado_esperado": "La fila de Luis Gómez ya no muestra jefe."
+    },
+    {
+      "id": "CP-07",
+      "escenario": "Rechazar que un empleado sea su propio jefe",
+      "nivel": "api",
+      "precondiciones": ["Ana Pérez activa (EMP-0001) sin jefe"],
+      "pasos": ["Enviar PUT /api/empleados/{id_ana} con jefe_id igual a su propio id", "Consultar GET /api/empleados/{id_ana}"],
+      "datos": {"empleado": "Ana Pérez", "codigo_esperado": "422", "mensaje_esperado": "Un empleado no puede ser su propio jefe"},
+      "resultado_esperado": "La API responde 422 con detail 'Un empleado no puede ser su propio jefe' y el jefe de Ana Pérez no cambia."
+    },
+    {
+      "id": "CP-08",
+      "escenario": "Rechazar que un empleado sea su propio jefe",
+      "nivel": "e2e",
+      "precondiciones": ["Ana Pérez activa sin jefe"],
+      "pasos": ["Pulsar editar-empleado-{id_ana}", "Elegir a Ana Pérez como su propio jefe en el selector (si lo permite)", "Pulsar empleado-guardar", "Verificar mensaje-error"],
+      "datos": {"empleado": "Ana Pérez", "mensaje_esperado": "Un empleado no puede ser su propio jefe"},
+      "resultado_esperado": "mensaje-error muestra 'Un empleado no puede ser su propio jefe' y la fila de Ana no muestra jefe."
+    },
+    {
+      "id": "CP-09",
+      "escenario": "Rechazar un jefe que no existe",
+      "nivel": "api",
+      "precondiciones": ["Luis Gómez activo sin jefe", "No existe ningún empleado con id 9999"],
+      "pasos": ["Enviar PUT /api/empleados/{id_luis} con jefe_id 9999", "Consultar GET /api/empleados/{id_luis}"],
+      "datos": {"jefe_id": "9999", "codigo_esperado": "422", "mensaje_esperado": "El jefe indicado no existe"},
+      "resultado_esperado": "La API responde 422 con detail 'El jefe indicado no existe' y Luis Gómez sigue sin jefe."
+    },
+    {
+      "id": "CP-10",
+      "escenario": "Rechazar un jefe dado de baja",
+      "nivel": "api",
+      "precondiciones": ["Luis Gómez activo sin jefe", "Marta Ruiz (marta.ruiz@empresa.com) con estado baja"],
+      "pasos": ["Enviar PUT /api/empleados/{id_luis} con jefe_id igual al id de Marta Ruiz", "Consultar GET /api/empleados/{id_luis}"],
+      "datos": {"jefe": "Marta Ruiz", "codigo_esperado": "409", "mensaje_esperado": "Un empleado dado de baja no puede ser jefe"},
+      "resultado_esperado": "La API responde 409 con detail 'Un empleado dado de baja no puede ser jefe' y Luis Gómez sigue sin jefe."
+    },
+    {
+      "id": "CP-11",
+      "escenario": "Rechazar un ciclo directo en la línea de reporte",
+      "nivel": "api",
+      "precondiciones": ["Ana Pérez activa sin jefe", "Luis Gómez activo con jefe Ana Pérez"],
+      "pasos": ["Enviar PUT /api/empleados/{id_ana} con jefe_id igual al id de Luis Gómez", "Consultar GET /api/empleados/{id_ana}"],
+      "datos": {"empleado": "Ana Pérez", "jefe_propuesto": "Luis Gómez", "codigo_esperado": "422", "mensaje_esperado": "La asignación crearía un ciclo en la línea de reporte"},
+      "resultado_esperado": "La API responde 422 con el mensaje de ciclo y Ana Pérez sigue sin jefe."
+    },
+    {
+      "id": "CP-12",
+      "escenario": "Rechazar un ciclo indirecto en la línea de reporte",
+      "nivel": "api",
+      "precondiciones": ["Ana Pérez, Luis Gómez y Eva Soto (eva.soto@empresa.com) activos", "Luis reporta a Ana y Eva reporta a Luis"],
+      "pasos": ["Enviar PUT /api/empleados/{id_ana} con jefe_id igual al id de Eva Soto", "Consultar GET /api/empleados/{id_ana}"],
+      "datos": {"empleado": "Ana Pérez", "jefe_propuesto": "Eva Soto", "codigo_esperado": "422", "mensaje_esperado": "La asignación crearía un ciclo en la línea de reporte"},
+      "resultado_esperado": "La API responde 422 con el mensaje de ciclo y Ana Pérez sigue sin jefe."
+    },
+    {
+      "id": "CP-13",
+      "escenario": "Al dar de baja a un jefe sus subordinados quedan sin jefe",
+      "nivel": "api",
+      "precondiciones": ["Ana Pérez activa", "Luis Gómez y Eva Soto activos con jefe Ana Pérez"],
+      "pasos": ["Dar de baja a Ana Pérez con la API de baja de empleados con fecha_baja 2026-11-15", "Consultar GET /api/empleados/{id_ana}", "Consultar GET /api/empleados/{id_luis} y GET /api/empleados/{id_eva}"],
+      "datos": {"jefe": "Ana Pérez", "fecha_baja": "2026-11-15", "estado_esperado": "baja", "jefe_id_subordinados": ""},
+      "resultado_esperado": "Ana Pérez queda con estado baja y Luis Gómez y Eva Soto quedan con jefe_id vacío."
+    },
+    {
+      "id": "CP-14",
+      "escenario": "Al dar de baja a un jefe sus subordinados quedan sin jefe",
+      "nivel": "e2e",
+      "precondiciones": ["Ana Pérez activa", "Luis Gómez y Eva Soto activos con jefe Ana Pérez"],
+      "pasos": ["Pulsar baja-empleado-{id_ana}", "Escribir 2026-11-15 en empleado-fecha-baja", "Pulsar confirmar-baja", "Verificar estado-empleado-{id_ana}", "Revisar fila-empleado-{id_luis} y fila-empleado-{id_eva}"],
+      "datos": {"estado_esperado": "Baja", "fecha_baja": "2026-11-15"},
+      "resultado_esperado": "estado-empleado-{id_ana} muestra 'Baja' y las filas de Luis Gómez y Eva Soto no muestran jefe."
+    }
+  ]
+}

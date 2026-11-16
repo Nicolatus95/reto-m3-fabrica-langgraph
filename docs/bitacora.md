@@ -707,6 +707,53 @@ Hallazgos:
     vuelven al estado. El único canal para decisiones humanas es el rechazo del plan con comentarios. Mejora
     para la reflexión: que la pausa acepte respuestas y se agreguen a `criterios.feature`.
 
+- **19:23 · Revisión de README y CHANGELOG (`895d973`).** Visto bueno: solo 3 archivos, CHANGELOG con los hashes
+  de la fase de hardening y README con setup, uso, pruebas, arquitectura y 7 capas de seguridad. Un hueco: el
+  README dice «`registros/` inaccesible» y en los riesgos residuales no menciona la búsqueda recursiva que llega
+  a `registros/` sin nombrarla (hallazgo de las 19:10). Se agrega junto con el commit del red team, con enlace a
+  `docs/red-team.md`.
+
+- **Pausa HITL 2 (plan), 19:22.** Captura `r3-pausa-plan.png`. Revisado en el chat de planeación contra las
+  reglas 6 y 8 a 12 y contra `app/tests/`. **Decisión: «si»**, sin comentarios (un rechazo vuelve a planear y gasta cuota).
+  - El plan responde las 5 preguntas abiertas: celda vacía sin jefe; 409 por regla 6 al asignar o quitar el jefe
+    de un empleado de baja; se extiende el `PUT /api/empleados/{id}` existente; el selector solo ofrece activos
+    (y el 409 de la regla 10 queda cubierto por API, CP-08); reasignar el mismo jefe → 200 sin cambios.
+  - Orden de validación correcto (404 → 409 baja → 422 propio jefe → 422 no existe → 409 jefe de baja → 422
+    ciclo), ciclo detectado subiendo por la cadena (directo e indirecto), regla 12 en la misma transacción y
+    «ante cualquier error no se modifica nada».
+  - **Hallazgo positivo:** el arquitecto detectó código muerto (`esquemas.py`, `servicio_empleados.py`) y
+    decidió no tocarlo «para no tener dos fuentes de verdad». También previó que `create_all` no agrega
+    columnas a una BD existente y propuso una migración mínima.
+  - Riesgo declarado por el propio plan (volver opcionales puesto y departamento en el PUT): verificado contra
+    `app/tests/api/test_hu_03.py` y el e2e de HU-03; ninguna prueba espera 422 por campo ausente, así que no hay regresión.
+  - Pendiente menor: los `data-testid` nuevos (`empleado-jefe`, `jefe-empleado-{id}`) deben pasar a
+    `contexto/convenciones_app.md` después de la corrida (ningún agente puede escribir `contexto/`).
+
+- **19:26 · HU-04 terminó en estado LISTA.** 0 ciclos de corrección (revisión: 0), 62 pruebas E2E en verde,
+  revisión aprobada (con modelo), documentación generada y verificada. Costo equivalente de agentes: 1.0485 USD
+  (es lo que costaría por API; con el plan Pro se descuenta de la cuota, no se cobra). Duración: ~10 min
+  (19:16:50 → 19:26). Agregó 9 pruebas de API y 5 E2E (`app/tests/*/test_hu_04*.py`).
+- **Revisión externa del código generado (chat de planeación):** el router implementa las reglas 8 a 11 en el
+  orden del plan; el recorrido de ciclos lleva un conjunto `visitados`, así que no se cuelga aunque la BD ya
+  trajera un ciclo; la regla 12 va en la misma transacción que la baja; el `PUT` distingue «no enviado» de `null`
+  con `model_fields_set`; la migración de `main.py` es idempotente.
+- **Hallazgo (alcance):** el agente de despliegue reescribió infraestructura que el plan no pedía tocar: instaló
+  `curl` en la imagen del backend para el healthcheck, quitó `X-Real-IP` de `nginx.conf` y renombró etapas del
+  Dockerfile del frontend. Todo pasó el chequeo del compose y funciona, pero `curl` agranda la superficie de la
+  imagen sin necesidad (el healthcheck con `python -c urllib` ya servía).
+- **Lección:** «verificación OK» no es lo mismo que «cambio mínimo». Los validadores comprueban que el resultado
+  funcione y sea seguro, no que el agente se haya quedado en su alcance. Mejora: que el revisor compare los
+  archivos tocados contra la lista «Archivos a crear o modificar» del plan.
+
+- Captura `r3-streaming-final.png`. Costo equivalente por tramo (del acumulado del streaming): filtro 0.0015,
+  analista 0.056, casos + plan 0.224, construir 0.205, automatizar 0.153, desplegar 0.095, E2E 0 (determinista),
+  revisor 0.297 (el más caro: lee todo el diff), documentador 0.017. Total 1.0485 USD.
+
+- Captura `r3-app-jefe.png`: el directorio muestra la columna «Jefe» (Ana Torres → Luis Pérez) tras una asignación manual.
+- **19:33 · HU-99 no arrancó:** la fábrica se niega a correr con `app/` sucio, porque el revisor revisa lo que
+  cambia en cada corrida. Es la precondición diseñada funcionando, no un fallo. Se commitea primero el resultado
+  de HU-04 (código y evidencia) y luego corre HU-99. `/usage`: 71 %.
+
 ## Pendientes para el reto (anotados durante la clase)
 
 - Suite de red team con las evasiones del filtro textual (Paso 2) y comprobar qué capa detiene cada una.

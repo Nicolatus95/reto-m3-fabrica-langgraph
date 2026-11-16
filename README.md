@@ -108,7 +108,7 @@ Dentro de una sesión de `claude` en esta carpeta:
 ## Pruebas
 
 ```powershell
-.venv\Scripts\python -m pytest tests -q                  # ~330 pruebas; sin modelo, sin Docker y sin red
+.venv\Scripts\python -m pytest tests -q                  # 548 pruebas (522 pasan, 1 omitida, 25 xfail: huecos del principal); sin modelo, sin Docker y sin red
 .venv\Scripts\python -m pytest tests\test_agentes.py -q  # solo los prompts de los subagentes (rápido)
 .venv\Scripts\python -m ruff check flujos hooks validadores tests verificacion
 ```
@@ -176,7 +176,8 @@ La historia de usuario es **contenido no confiable**. Ninguna capa basta sola (d
 **Riesgos residuales conocidos:** `npm`/`npx`/`node` del desarrollador siguen en el anfitrión; la fase de red de `npm ci`
 llega al registro de npm; Chromium corre sin su sandbox interno (dentro del contenedor endurecido); los Dockerfiles de
 `despliegue` ejecutan sus `RUN` al construir; el agente principal conserva `npm`, `node`, `docker`, `curl` y `python -c`.
-Búsquedas recursivas, comodines y rutas armadas por partes evaden el filtro por nombre en el principal (a los subagentes
+El `curl` del rol `despliegue` solo admite URLs http(s) a `localhost`, `127.0.0.1`, `backend` o `frontend` y una lista
+blanca de opciones (`rol.py`, `revisar_curl`): `curl file://` ya no es un hueco de la fábrica. Búsquedas recursivas, comodines y rutas armadas por partes evaden el filtro por nombre en el principal (a los subagentes
 los frena `rol.py`), PowerShell queda fuera del matcher, y `curl` y `python -c` están en `permissions.allow`: ver
 [`docs/red-team.md`](docs/red-team.md). Detalle del sandbox en `CLAUDE.md`.
 

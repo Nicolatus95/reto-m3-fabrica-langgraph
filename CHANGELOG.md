@@ -7,6 +7,14 @@ El proyecto no usa versiones numeradas: las entradas se agrupan por fase y por f
 
 Fase 2 del reto, cerrada y sin push.
 
+### Cambiado
+- **Fase 3b · `curl` del rol `despliegue`** (`hooks/rol.py`, `revisar_curl`): solo URLs `http(s)` (esquema y host sin
+  distinguir mayúsculas) a `localhost`, `127.0.0.1`, `backend` o `frontend`; sin globbing (`{}`, `[]`), sin `@`, sin
+  `$`, comilla invertida, `<`, `>`, `&` ni saltos de línea, y con lista blanca de opciones (`-s -S -f -i -I -m/--max-time
+  --retry --retry-delay -w -o /dev/null -X GET|HEAD -H`; sin `-L`). Cierra los casos 3b y 3c del red team para la
+  fábrica; los del agente principal siguen documentados como `xfail`. `tests/test_red_team.py`: casos nuevos y un
+  control negativo (sin la regla, 3b/3c pasan en `despliegue`).
+
 ### Añadido
 - **Revisor real de dos capas**: análisis estático sin modelo (ruff y bandit fijados, comparación antes/después por
   archivo, regla y conteo) más una revisión con modelo sin herramientas. `4fa19ff`

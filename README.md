@@ -73,6 +73,11 @@ antes de gastar tokens.
 # Historial de checkpoints de una corrida (solo lectura, del más reciente al más antiguo)
 .venv\Scripts\python -m flujos.fabrica --historial HU-04-20261115-101500
 
+# Memoria de decisiones humanas (solo lectura): lo que la persona respondió en preguntas y rechazos del plan
+.venv\Scripts\python -m flujos.fabrica --memoria
+# Ensayo de la memoria: corre HU-01 (la persona responde texto) y luego HU-02, e imprime su precedentes.md
+.venv\Scripts\python -m flujos.fabrica historias\HU-01-registrar-empleado.md --ensayo --escenario precedentes
+
 # Ensayo SIN modelo y SIN Docker: dobles deterministas para ver las rutas del grafo (no toca salida/)
 .venv\Scripts\python -m flujos.fabrica historias\HU-01-registrar-empleado.md --ensayo --escenario e2e_pruebas
 .venv\Scripts\python -m flujos.fabrica --diagrama          # solo exporta docs\grafo.mmd y docs\grafo-correccion.mmd
@@ -245,3 +250,12 @@ Labs: **4A** El ataque (¿qué capa lo detuvo primero? desactiva solo el filtro 
 prueba para que espere un código equivocado: ¿a quién manda y con qué criterio?). **4C** Auditoría (con la auditoría de
 `registros/`, desde tu terminal: ¿qué agente usó más herramientas?). **4D** Tu defensa (agrega una regla a
 `hooks/seguridad.py` y pruébala sin modelo con un JSON).
+
+## Memoria de decisiones (Fase 5)
+Las respuestas de la persona (texto libre en las preguntas abiertas y los comentarios al rechazar un plan) se guardan en
+un Store de LangGraph (`salida/memoria.sqlite`, namespace `("decisiones",)`) y el nodo `precedentes` entrega a las
+historias siguientes un `salida/HU-xx/precedentes.md` con las 10 decisiones más recientes de OTRAS historias (máx. 4000
+caracteres). Por qué Store y no un archivo en `contexto/`: el código selecciona, acota y sanea lo que el agente ve, y
+ningún agente escribe la memoria ni puede leer la base (`hooks/rol.py` bloquea `salida/*.sqlite`); un archivo en
+contexto lo leerían y podrían editar los agentes sin filtro. En las preguntas abiertas se responde `si`, `no` (o vacío:
+detiene) o un texto con las respuestas. `--memoria` lista el contenido sin modificarlo.

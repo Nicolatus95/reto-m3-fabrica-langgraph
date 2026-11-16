@@ -503,10 +503,10 @@ def test_reanudar_sigue_imprimiendo_y_parte_del_costo_guardado(montar):
 # --- recursion_limit ------------------------------------------------------------------------------------------------
 def test_el_limite_de_recursion_sale_de_los_topes():
     from flujos import fabrica
-    esperado = (6 + 2 * fabrica.MAX_RECHAZOS + fabrica.MAX_INTENTOS_CONSTRUIR + 3 + 3 * fabrica.MAX_CICLOS
+    esperado = (7 + 2 * fabrica.MAX_RECHAZOS + fabrica.MAX_INTENTOS_CONSTRUIR + 3 + 3 * fabrica.MAX_CICLOS
                 + 1 + 3 * fabrica.MAX_CICLOS_REVISION + 2)
     assert calcular_recursion_limit(margen=0) == esperado and calcular_recursion_limit() == esperado + 10
-    assert RECURSION_LIMIT == 37 and config_de("HU-01-x")["recursion_limit"] == RECURSION_LIMIT
+    assert RECURSION_LIMIT == 38 and config_de("HU-01-x")["recursion_limit"] == RECURSION_LIMIT
 
 
 @pytest.mark.parametrize("escenario", [

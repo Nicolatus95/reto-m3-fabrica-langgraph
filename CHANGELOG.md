@@ -16,6 +16,13 @@ Fase 2 del reto, cerrada y sin push.
   control negativo (sin la regla, 3b/3c pasan en `despliegue`).
 
 ### Añadido
+- **Fase 5 · Memoria de decisiones humanas** (`flujos/memoria.py`, `SqliteStore` en `salida/memoria.sqlite`; `InMemoryStore`
+  en ensayo y pruebas): `nodo_preguntas` acepta `si`, `no` (o vacío: detiene) o texto libre, que el código anexa a
+  `criterios.feature` y guarda; un rechazo del plan también se guarda. Nodo nuevo `precedentes` (tras `filtrar`, así una
+  historia bloqueada no recibe memoria) escribe `precedentes.md` con las 10 decisiones más recientes de otras historias
+  (tope 4000 caracteres, saneadas). `Estado.precedentes`, `--memoria`, escenario de ensayo `precedentes`,
+  `recursion_limit` 37 → 38. `hooks/rol.py`: ningún rol lee `salida/*.sqlite` (ni `-wal`/`-shm`) ni busca en la raíz de
+  `salida/`. Los prompts de analista y arquitecto leen `precedentes.md`. `tests/test_memoria.py`.
 - **Fase 4 · Filtro de seguridad en lote** (`flujos/lote.py`): grafo `START → repartir (Send) → filtrar_una × N → reunir
   → END` que pasa varias historias por el filtro en paralelo (`max_concurrency=4`) y escribe `salida/lote-<sello>.md`.
   `filtrar_una` reutiliza `nodo_filtrar`; cada historia falla cerrado por separado (`bloqueada`, `falla` con el tipo de

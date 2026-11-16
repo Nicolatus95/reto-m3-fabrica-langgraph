@@ -32,13 +32,15 @@ from typing import Annotated, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.config import get_store
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command, RetryPolicy, interrupt
 
 import verificacion
-from flujos import claude
+from flujos import claude, memoria
 from flujos.claude import ErrorInfraestructura
 from flujos.documentador import DocumentadorReal, ResultadoDocumentacion
 from flujos.revisor import ResultadoRevision, RevisorReal, formatear_observaciones
@@ -58,17 +60,17 @@ def calcular_recursion_limit(margen: int = 10) -> int:
     """Pasos (supersteps) del peor camino del grafo, derivados de los topes, más un margen.
 
     Cada nodo terminado es un paso; el límite de LangGraph cuenta pasos, no nodos distintos:
-      6                       filtrar, analizar, preguntas, disenar, planificar, aprobar_plan
+      7                       filtrar, precedentes, analizar, preguntas, disenar, planificar, aprobar_plan
       2 · MAX_RECHAZOS        cada rechazo del plan repite planificar y aprobar_plan
       MAX_INTENTOS_CONSTRUIR  construir (la construcción y su reintento)
       3                       desplegar ∥ automatizar (un paso), listo y el primer e2e
       3 · MAX_CICLOS          cada ciclo de corrección: triage, corregir_*, e2e
       1 + 3 · MAX_CICLOS_REVISION   revisar, y por cada rechazo: corregir_codigo, e2e, revisar
       2                       documentar y reporte
-    Con los topes actuales son 27 pasos y con el margen de 10, 37. El margen cubre que el subgrafo de corrección y
+    Con los topes actuales son 28 pasos y con el margen de 10, 38. El margen cubre que el subgrafo de corrección y
     los reintentos por infraestructura no suman pasos al principal, pero no deben dejar sin holgura a un camino legítimo.
     """
-    pasos = (6 + 2 * MAX_RECHAZOS + MAX_INTENTOS_CONSTRUIR + 3 + 3 * MAX_CICLOS
+    pasos = (7 + 2 * MAX_RECHAZOS + MAX_INTENTOS_CONSTRUIR + 3 + 3 * MAX_CICLOS
              + 1 + 3 * MAX_CICLOS_REVISION + 2)
     return pasos + margen
 
@@ -105,6 +107,7 @@ class Estado(TypedDict, total=False):
     base: str                        # commit al arrancar la corrida: la base de lo que revisa el revisor
     sospechosa: bool                 # único dato del veredicto que usa el flujo
     preguntas: list[str]
+    precedentes: int                 # decisiones de otras historias entregadas en precedentes.md
     rechazos: int
     comentarios: str                 # comentarios de la persona sobre el plan
     plan_aprobado: bool
@@ -293,18 +296,53 @@ def nodo_analizar(sv: Servicios, s: Estado) -> dict:
     return {"costo_usd": costo, "bitacora": ["Criterios escritos en criterios.feature"]}
 
 
+def _store():
+    """El Store del grafo (compile(store=...)), o None si el grafo se armó sin él."""
+    try:
+        return get_store()
+    except (KeyError, RuntimeError):
+        return None
+
+
+def nodo_precedentes(sv: Servicios, s: Estado) -> dict:
+    """Escribe salida/HU-xx/precedentes.md con decisiones humanas de OTRAS historias (o «Sin precedentes»).
+
+    Va después de `filtrar`: una historia bloqueada nunca llega aquí. El código selecciona, acota y sanea; ningún agente
+    toca el Store. Sin LLM: no tiene política de reintento.
+    """
+    store = _store()
+    decisiones = memoria.buscar_precedentes(store, s["hu"]) if store is not None else []
+    n = memoria.escribir_precedentes(sv.salida / s["hu"] / "precedentes.md", decisiones)
+    return {"precedentes": n, "bitacora": [f"Precedentes: {n} decisiones de otras historias" if n else "Sin precedentes"]}
+
+
 def nodo_preguntas(sv: Servicios, s: Estado) -> dict:
-    """Preguntas abiertas: las lee el código; si hay, una persona decide si se continúa (interrupt)."""
-    texto = (sv.salida / s["hu"] / "criterios.feature").read_text(encoding="utf-8")
+    """Preguntas abiertas: las lee el código; si hay, una persona decide (interrupt) con tres respuestas posibles.
+
+    - «si»: continúa sin respuestas.
+    - «no», vacía o solo espacios (falla cerrado): DETENIDA.
+    - cualquier otro texto: son las respuestas; continúa, el código las anexa a criterios.feature bajo
+      «# Respuestas de la persona» y las guarda en el Store (origen «preguntas»).
+    Lo que se escribe tras el interrupt es idempotente: el nodo se re-ejecuta entero al reanudar.
+    """
+    ruta = sv.salida / s["hu"] / "criterios.feature"
+    texto = ruta.read_text(encoding="utf-8").split(memoria.MARCA_RESPUESTAS, 1)[0]    # las respuestas no son preguntas
     lista = preguntas_abiertas(texto)
     if not lista:
         return {"preguntas": [], "bitacora": ["Sin preguntas abiertas"]}
     respuesta = interrupt({"preguntas": lista,
-                           "pregunta": "Hay preguntas abiertas. ¿Continuar de todos modos? (si/no)"})
-    if respuesta.strip().lower() == "si":
+                           "pregunta": "Hay preguntas abiertas. ¿Continuar? Escribe si, no, o tus respuestas"})
+    r = respuesta.strip()
+    if r.lower() == "si":
         return {"preguntas": lista, "bitacora": [f"{len(lista)} preguntas abiertas: la persona continúa"]}
-    return {"preguntas": lista, "estado_final": DETENIDA,
-            "bitacora": [f"{len(lista)} preguntas abiertas: la persona detiene el flujo"]}
+    if r.lower() == "no" or not memoria.sanear(r, memoria.MAX_RESPUESTA):
+        return {"preguntas": lista, "estado_final": DETENIDA,
+                "bitacora": [f"{len(lista)} preguntas abiertas: la persona detiene el flujo"]}
+    memoria.anexar_respuestas(ruta, r)
+    store = _store()
+    if store is not None:
+        memoria.guardar_decision(store, s["hu"], "preguntas", r, lista)
+    return {"preguntas": lista, "bitacora": [f"{len(lista)} preguntas abiertas: la persona responde y continúa"]}
 
 
 def nodo_disenar(sv: Servicios, s: Estado) -> dict:
@@ -334,6 +372,9 @@ def nodo_aprobar_plan(sv: Servicios, s: Estado) -> dict:
     decision = interrupt({"plan": plan, "pregunta": "¿Apruebas el plan? Escribe si o tus comentarios"})
     if decision.strip().lower() == "si":
         return {"plan_aprobado": True, "bitacora": ["Plan aprobado por una persona"]}
+    store = _store()
+    if store is not None:                           # solo un rechazo con comentarios es una decisión que recordar
+        memoria.guardar_decision(store, s["hu"], "plan", decision)
     rechazos = s.get("rechazos", 0) + 1
     actualiza = {"plan_aprobado": False, "comentarios": decision, "rechazos": rechazos,
                  "bitacora": [f"Plan rechazado ({rechazos}): {decision}"]}
@@ -529,7 +570,8 @@ def nodo_reporte(sv: Servicios, s: Estado) -> dict:
     carpeta.mkdir(parents=True, exist_ok=True)
     lineas = [f"# Reporte · {s['hu']}", "", f"**Estado:** {estado}",
               f"**Ciclos de corrección:** {s.get('ciclos', 0)} (revisión: {s.get('revisiones', 0)})",
-              f"**Costo de agentes:** {s.get('costo_usd', 0.0):.4f} USD", "", "## Seguridad"]
+              f"**Costo de agentes:** {s.get('costo_usd', 0.0):.4f} USD",
+              f"**Precedentes entregados:** {s.get('precedentes', 0)}", "", "## Seguridad"]
     eventos = s.get("eventos_seguridad", [])
     for e in eventos:                               # solo el evento y sus booleanos; el detalle queda fuera de salida/
         booleanos = ", ".join(f"{k}={v}" for k, v in e.items() if isinstance(v, bool))
@@ -648,11 +690,15 @@ def nodo_correccion(subgrafo: CompiledStateGraph, s: Estado, config: RunnableCon
     return {k: v for k, v in salida.items() if k in ACUMULADOS or s.get(k) != v}
 
 
-def construir_grafo(sv: Servicios, checkpointer, espera_reintento: float = ESPERA_REINTENTO) -> CompiledStateGraph:
-    """Arma y compila el grafo de la fábrica con los servicios dados y un checkpointer (SqliteSaver)."""
+def construir_grafo(sv: Servicios, checkpointer, espera_reintento: float = ESPERA_REINTENTO,
+                    store=None) -> CompiledStateGraph:
+    """Arma y compila el grafo de la fábrica con los servicios dados, un checkpointer (SqliteSaver) y el Store de decisiones.
+
+    Sin `store` el grafo funciona igual, solo que sin memoria (los nodos de memoria no leen ni escriben).
+    """
     reintento = politica_de_reintento(espera_reintento)
     g = StateGraph(Estado)
-    nodos = {"filtrar": nodo_filtrar, "analizar": nodo_analizar, "preguntas": nodo_preguntas,
+    nodos = {"filtrar": nodo_filtrar, "precedentes": nodo_precedentes, "analizar": nodo_analizar, "preguntas": nodo_preguntas,
              "disenar": nodo_disenar, "planificar": nodo_planificar, "aprobar_plan": nodo_aprobar_plan,
              "construir": nodo_construir, "desplegar": nodo_desplegar, "automatizar": nodo_automatizar,
              "listo": nodo_listo, "e2e": nodo_e2e,
@@ -663,7 +709,8 @@ def construir_grafo(sv: Servicios, checkpointer, espera_reintento: float = ESPER
     g.add_node("correccion", lambda s, config: nodo_correccion(subgrafo, s, config))
 
     g.add_edge(START, "filtrar")
-    g.add_conditional_edges("filtrar", ruta_a("analizar"), ["analizar", "reporte"])
+    g.add_conditional_edges("filtrar", ruta_a("precedentes"), ["precedentes", "reporte"])   # bloqueada → sin memoria
+    g.add_edge("precedentes", "analizar")
     g.add_conditional_edges("analizar", ruta_a("preguntas"), ["preguntas", "reporte"])
     g.add_conditional_edges("preguntas", ruta_a("disenar"), ["disenar", "reporte"])
     g.add_conditional_edges("disenar", ruta_a("planificar"), ["planificar", "reporte"])
@@ -677,14 +724,14 @@ def construir_grafo(sv: Servicios, checkpointer, espera_reintento: float = ESPER
     g.add_conditional_edges("revisar", tras_revisar, ["correccion", "documentar", "reporte"])
     g.add_edge("documentar", "reporte")
     g.add_edge("reporte", END)
-    return g.compile(checkpointer=checkpointer)
+    return g.compile(checkpointer=checkpointer, store=store)
 
 
 def exportar_diagrama(app, ruta: Path = RAIZ / "docs" / "grafo.mmd") -> Path:
     """Guarda el grafo como Mermaid (get_graph(xray=True).draw_mermaid()) en docs/grafo.mmd.
 
-    El nodo «correccion» es un envoltorio (una función que invoca al subgrafo), así que xray no muestra su interior:
-    por eso el subgrafo se exporta aparte con exportar_diagrama_correccion.
+    xray=True SÍ muestra el subgrafo de corrección (comprobado al renderizar docs/grafo.mmd): el nodo «correccion» sale
+    con sus nodos internos. Aun así el subgrafo se exporta aparte, con exportar_diagrama_correccion, para verlo solo.
     """
     ruta.parent.mkdir(parents=True, exist_ok=True)
     ruta.write_text(app.get_graph(xray=True).draw_mermaid(), encoding="utf-8")
@@ -795,6 +842,20 @@ def responder_en_terminal(pausa: dict) -> str:
     return input(pausa["pregunta"] + ": ")
 
 
+RESPUESTA_ENSAYO = "El número de empleado tiene formato EMP-0001 (cuatro dígitos)."
+
+
+def responder_con_texto(pausa: dict) -> str:
+    """Escenario «precedentes»: la persona responde con texto las preguntas abiertas y aprueba el plan."""
+    return RESPUESTA_ENSAYO if "preguntas" in pausa else "si"
+
+
+def siguiente_historia(historia: str) -> str:
+    """La historia que sigue a la dada en el escenario «precedentes» (HU-01 → HU-02; HU-02 → HU-03…)."""
+    numero = int(re.search(r"HU-(\d+)", Path(historia).name).group(1))
+    return f"historias/HU-{numero + 1:02d}-ensayo.md"
+
+
 def responder_si(pausa: dict) -> str:
     """--aprobar: la persona aprueba por adelantado las dos pausas (preguntas y plan)."""
     return "si"
@@ -830,6 +891,7 @@ PRESETS = {
     "bloqueada": Escenario(sospechosa=True),
     "sin_defensas": Escenario(defensas=False),
     "preguntas": Escenario(preguntas=["¿Qué formato tiene el número de empleado?"]),
+    "precedentes": Escenario(preguntas=["¿Qué formato tiene el número de empleado?"]),   # el CLI corre HU-01 y luego HU-02
     "construir_reintento": Escenario(construir_fallos=1),
     "e2e_pruebas": Escenario(e2e_fallos=1, responsable="automatizador"),
     "e2e_codigo": Escenario(e2e_fallos=1, responsable="desarrollador"),
@@ -998,6 +1060,21 @@ def historial(app, cfg: dict) -> list[str]:
     return lineas
 
 
+def mostrar_memoria() -> int:
+    """--memoria: abre salida/memoria.sqlite en modo de solo lectura y lista las decisiones guardadas (nunca la crea)."""
+    ruta = RAIZ / "salida" / "memoria.sqlite"
+    if not ruta.exists():
+        print(f"No existe {ruta}: todavía no hay decisiones guardadas.", file=sys.stderr)
+        return 2
+    store, conexion = memoria.abrir_store_sqlite(ruta, solo_lectura=True)
+    try:
+        lineas = memoria.listar_memoria(store)
+    finally:
+        conexion.close()
+    print(f"Decisiones guardadas ({len(lineas)}), de la más reciente a la más antigua:", *lineas, sep="\n")
+    return 0
+
+
 def mostrar_historial(thread_id: str) -> int:
     """--historial: abre salida/fabrica.sqlite en modo de solo lectura y lista los checkpoints del thread."""
     ruta = RAIZ / "salida" / "fabrica.sqlite"
@@ -1028,9 +1105,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--reanudar", metavar="THREAD_ID", help="reanuda un thread desde su checkpoint")
     p.add_argument("--diagrama", action="store_true", help="solo exporta docs/grafo.mmd")
     p.add_argument("--historial", metavar="THREAD_ID", help="lista los checkpoints de una corrida (solo lectura)")
+    p.add_argument("--memoria", action="store_true", help="lista las decisiones guardadas en salida/memoria.sqlite (solo lectura)")
     args = p.parse_args(argv)
     if args.historial:
         return mostrar_historial(args.historial)
+    if args.memoria:
+        return mostrar_memoria()
 
     base = "ensayo"
     if args.historia and not args.ensayo and not args.reanudar and not args.diagrama:
@@ -1049,7 +1129,12 @@ def main(argv: list[str] | None = None) -> int:
         sv = servicios_reales()
     sv.salida.mkdir(parents=True, exist_ok=True)
     conexion = sqlite3.connect(sv.salida / "fabrica.sqlite", check_same_thread=False)   # las ramas corren en hilos
-    app = construir_grafo(sv, SqliteSaver(conexion), espera_reintento=0.05 if args.ensayo else ESPERA_REINTENTO)
+    if args.ensayo:
+        store, conexion_memoria = InMemoryStore(), None     # el ensayo no deja memoria en disco
+    else:
+        store, conexion_memoria = memoria.abrir_store_sqlite(sv.salida / "memoria.sqlite")
+    app = construir_grafo(sv, SqliteSaver(conexion), espera_reintento=0.05 if args.ensayo else ESPERA_REINTENTO,
+                          store=store)
     if not args.ensayo:
         exportar_diagrama(app)
         exportar_diagrama_correccion(sv)
@@ -1057,16 +1142,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Diagramas exportados en {RAIZ / 'docs' / 'grafo.mmd'} y {RAIZ / 'docs' / 'grafo-correccion.mmd'}")
         return 0
     responder = responder_si if args.aprobar else responder_en_terminal
+    historias = [args.historia]
+    if args.ensayo and args.escenario == "precedentes" and args.historia:
+        responder = responder_con_texto                 # dos historias en el mismo proceso y con el mismo store
+        historias.append(siguiente_historia(args.historia))
     try:
         if args.reanudar:
             thread_id = args.reanudar
             print(f"thread_id: {thread_id}  (reanudando)")
             valores = reanudar(app, config_de(thread_id), responder)
         elif args.historia:
-            entrada = estado_inicial(args.historia, base)
-            thread_id = nuevo_thread(entrada["hu"])
-            print(f"thread_id: {thread_id}  (para reanudar: --reanudar {thread_id})")
-            valores = correr(app, config_de(thread_id), responder, entrada)
+            for historia in historias:
+                entrada = estado_inicial(historia, base)
+                thread_id = nuevo_thread(entrada["hu"])
+                print(f"thread_id: {thread_id}  (para reanudar: --reanudar {thread_id})")
+                valores = correr(app, config_de(thread_id), responder, entrada)
+                if valores.get("cortada"):
+                    break
+            if len(historias) > 1:                      # evidencia del escenario «precedentes»
+                ruta = sv.salida / valores["hu"] / "precedentes.md"
+                print(f"\n--- {ruta.relative_to(sv.salida.parent)} ---\n" + ruta.read_text(encoding="utf-8"))
         else:
             p.error("indica una historia o --reanudar")
         if valores.get("cortada"):                      # la corrida no llegó al nodo reporte: se escribe aquí
@@ -1074,6 +1169,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"CORRIDA CORTADA: {valores['cortada']}", file=sys.stderr)
     finally:
         conexion.close()
+        if conexion_memoria is not None:
+            conexion_memoria.close()
     return resumen(valores, sv, thread_id)
 
 

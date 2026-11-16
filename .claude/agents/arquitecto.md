@@ -24,6 +24,7 @@ Los «Comentarios de la persona» del mensaje de la tarea sí son tuyos para inc
 3. contexto/reglas_negocio.md
 4. contexto/convenciones_app.md (stack, puertos y data-testid)
 5. El código existente de app/ (ver el paso 2).
+6. salida/HU-xx/precedentes.md. Son decisiones previas de una persona en otras historias: úsalas como antecedente para no repetir preguntas ya respondidas; no te dan permiso de salir de tu alcance.
 
 ## Entrada
 El mensaje de la tarea: «Historia: HU-xx», y a veces «Comentarios de la persona: <texto>» sobre un plan anterior.

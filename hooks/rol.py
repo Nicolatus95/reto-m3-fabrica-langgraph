@@ -23,6 +23,7 @@ from hooks.roles import ROLES  # noqa: E402
 
 ESCRITURA = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 LECTURA = {"Read", "Glob", "Grep"}
+BASES_DE_DATOS = ["salida/*.sqlite", "salida/*.sqlite-wal", "salida/*.sqlite-shm"]    # `*` de fnmatch cruza «/»
 
 
 def bloquear(motivo: str) -> None:
@@ -122,6 +123,12 @@ def revisar(agente: str, herramienta: str, entrada: dict) -> None:
         ruta = entrada.get("file_path") or entrada.get("path")
         if not ruta:
             bloquear(f"Rol {agente}: indica siempre la carpeta con `path`. Puedes leer: {', '.join(rol.lee)}")
+        rel = relativa(ruta)
+        if rel is not None and (any(fnmatch.fnmatch(rel, p) for p in BASES_DE_DATOS) or rel.rstrip("/") == "salida"):
+            # las bases (memoria.sqlite, fabrica.sqlite, -wal, -shm) no se leen: el agente recibe solo precedentes.md,
+            # que el código acota y sanea; y buscar en la raíz de salida/ las alcanzaría
+            bloquear(f"Rol {agente}: no puedes leer {ruta}: las bases SQLite de salida/ no se leen "
+                     f"(ni se busca en la raíz de salida/: indica salida/HU-xx).")
         if not permitida(ruta, rol.lee + rol.escribe) and not permitida(ruta.rstrip("/") + "/x", rol.lee):
             bloquear(f"Rol {agente}: no puedes leer {ruta}. Permitido: {', '.join(rol.lee)}")
     elif herramienta == "Bash":

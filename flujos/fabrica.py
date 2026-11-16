@@ -874,6 +874,36 @@ def resumen(valores: dict, sv: Servicios, thread_id: str) -> int:
     return 0 if estado == LISTA else 1
 
 
+def historial(app, cfg: dict) -> list[str]:
+    """Checkpoints de un thread, del más reciente al más antiguo: paso, siguiente nodo, checkpoint_id y hora. Solo lectura."""
+    lineas = []
+    for instantanea in app.get_state_history(cfg):
+        paso = instantanea.metadata.get("step", "?")
+        siguiente = ", ".join(instantanea.next) or "(fin)"
+        hora = datetime.fromisoformat(instantanea.created_at).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        lineas.append(f"paso {paso:>3}  siguiente: {siguiente:<28}  checkpoint_id: "
+                      f"{instantanea.config['configurable']['checkpoint_id']}  {hora}")
+    return lineas
+
+
+def mostrar_historial(thread_id: str) -> int:
+    """--historial: abre salida/fabrica.sqlite en modo de solo lectura y lista los checkpoints del thread."""
+    ruta = RAIZ / "salida" / "fabrica.sqlite"
+    if not ruta.exists():
+        print(f"No existe {ruta}: todavía no hay corridas.", file=sys.stderr)
+        return 2
+    conexion = sqlite3.connect(f"file:{ruta.as_posix()}?mode=ro", uri=True, check_same_thread=False)
+    try:
+        lineas = historial(construir_grafo(servicios_reales(), SqliteSaver(conexion)), config_de(thread_id))
+    finally:
+        conexion.close()
+    if not lineas:
+        print(f"No hay checkpoints para el thread {thread_id}.", file=sys.stderr)
+        return 2
+    print(f"Historial de {thread_id} (del más reciente al más antiguo):", *lineas, sep="\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Punto de entrada: python -m flujos.fabrica <historia> [--aprobar] [--ensayo] [--reanudar <thread_id>]."""
     if hasattr(sys.stdout, "reconfigure"):
@@ -885,7 +915,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--escenario", default="lista", choices=sorted(PRESETS), help="ruta a forzar en el ensayo")
     p.add_argument("--reanudar", metavar="THREAD_ID", help="reanuda un thread desde su checkpoint")
     p.add_argument("--diagrama", action="store_true", help="solo exporta docs/grafo.mmd")
+    p.add_argument("--historial", metavar="THREAD_ID", help="lista los checkpoints de una corrida (solo lectura)")
     args = p.parse_args(argv)
+    if args.historial:
+        return mostrar_historial(args.historial)
 
     base = "ensayo"
     if args.historia and not args.ensayo and not args.reanudar and not args.diagrama:

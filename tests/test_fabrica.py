@@ -28,6 +28,7 @@ from flujos.fabrica import (
     construir_grafo,
     correr,
     estado_inicial,
+    historial,
     main,
     precondicion_app,
     reanudar,
@@ -530,3 +531,54 @@ def test_main_con_limite_alcanzado_escribe_el_reporte_y_sale_con_1(monkeypatch, 
     assert "CORRIDA CORTADA" in captura.err and "Traceback" not in captura.err + captura.out
     reporte = (tmp_path / "salida" / "HU-01" / "reporte.md").read_text(encoding="utf-8")
     assert "ESCALAR A UNA PERSONA" in reporte and "se alcanzó el límite de 4 pasos" in reporte
+
+
+# --- --historial ---------------------------------------------------------------------------------------------------
+def test_historial_lista_los_checkpoints_del_mas_reciente_al_mas_antiguo(montar):
+    m = montar()
+    correr_fabrica(m)
+    lineas = historial(m.app, m.cfg)
+    patron = re.compile(r"^paso\s+(-?\d+)  siguiente: (.+?)\s+checkpoint_id: ([0-9a-f-]{36})  \d{4}-\d\d-\d\d \d\d:\d\d:\d\d$")
+    partes = [patron.match(linea) for linea in lineas]
+    assert all(partes), lineas
+    pasos = [int(p.group(1)) for p in partes]
+    assert pasos == sorted(pasos, reverse=True) and pasos[-1] == -1          # el más antiguo es la entrada (paso -1)
+    assert partes[0].group(2) == "(fin)" and len(set(p.group(3) for p in partes)) == len(partes)
+
+
+def test_historial_no_modifica_la_corrida(montar):
+    m = montar()
+    correr_fabrica(m)
+    antes = (m.app.get_state(m.cfg).values, len(list(m.app.get_state_history(m.cfg))))
+    historial(m.app, m.cfg)
+    assert (m.app.get_state(m.cfg).values, len(list(m.app.get_state_history(m.cfg)))) == antes
+
+
+def test_historial_desde_la_cli_en_modo_de_solo_lectura(monkeypatch, tmp_path, capsys, montar):
+    from flujos import fabrica
+    m = montar()
+    correr_fabrica(m)
+    m.conexion.close()
+    monkeypatch.setattr(fabrica, "RAIZ", tmp_path)                    # salida/fabrica.sqlite de la corrida de prueba
+    antes = (tmp_path / "salida" / "fabrica.sqlite").read_bytes()
+    assert main(["--historial", "HU-01-prueba"]) == 0
+    salida = capsys.readouterr().out
+    assert "Historial de HU-01-prueba" in salida and "checkpoint_id:" in salida and "(fin)" in salida
+    assert (tmp_path / "salida" / "fabrica.sqlite").read_bytes() == antes
+
+
+def test_historial_de_un_thread_inexistente_avisa(monkeypatch, tmp_path, capsys, montar):
+    from flujos import fabrica
+    m = montar()
+    correr_fabrica(m)
+    m.conexion.close()
+    monkeypatch.setattr(fabrica, "RAIZ", tmp_path)
+    assert main(["--historial", "HU-77-nada"]) == 2
+    assert "No hay checkpoints para el thread HU-77-nada" in capsys.readouterr().err
+
+
+def test_historial_sin_base_de_datos_avisa(monkeypatch, tmp_path, capsys):
+    from flujos import fabrica
+    monkeypatch.setattr(fabrica, "RAIZ", tmp_path)
+    assert main(["--historial", "HU-01-x"]) == 2
+    assert "todavía no hay corridas" in capsys.readouterr().err

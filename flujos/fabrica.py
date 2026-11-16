@@ -43,6 +43,7 @@ from flujos.documentador import DocumentadorReal, ResultadoDocumentacion
 from flujos.revisor import ResultadoRevision, RevisorReal, formatear_observaciones
 from validadores.contratos import Diagnostico, Observacion, preguntas_abiertas
 from validadores.validar import problemas_de
+from verificacion import sandbox
 
 RAIZ = Path(__file__).resolve().parent.parent
 
@@ -165,6 +166,14 @@ def precondicion_app(raiz: Path = RAIZ) -> str | None:
         return ("app/ tiene cambios sin commitear; la fábrica no arranca así porque el revisor revisa lo que cambia "
                 "en la corrida. Haz commit o descarta estos cambios:\n" + r.stdout.rstrip())
     return None
+
+
+def precondicion_sandbox() -> str | None:
+    """Una corrida real exige Docker y las dos imágenes del sandbox (fabrica-sandbox:1 y fabrica-sandbox-node:1).
+
+    Devuelve el mensaje (con el comando para construirlas) o None. El código generado nunca corre en el anfitrión.
+    """
+    return sandbox.precondicion()
 
 
 def commit_base(raiz: Path = RAIZ) -> str:
@@ -1024,6 +1033,7 @@ def main(argv: list[str] | None = None) -> int:
     base = "ensayo"
     if args.historia and not args.ensayo and not args.reanudar and not args.diagrama:
         problema = precondicion_app()                   # precondición de una corrida real: app/ limpia en git
+        problema = problema or precondicion_sandbox()   # y las imágenes del sandbox: falla antes de gastar tokens
         if problema:
             print(f"No se inicia la corrida. {problema}", file=sys.stderr)
             return 2

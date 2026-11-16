@@ -39,6 +39,7 @@ from flujos.fabrica import (
     main,
     politica_de_reintento,
     precondicion_app,
+    precondicion_sandbox,
     reanudar,
     responder_si,
 )
@@ -717,3 +718,37 @@ def test_el_subgrafo_se_exporta_aparte(montar, tmp_path):
     texto = ruta.read_text(encoding="utf-8")
     assert "triage" in texto and "corregir_codigo" in texto and "e2e" in texto
     assert "correccion" in exportar_diagrama(m.app, tmp_path / "grafo.mmd").read_text(encoding="utf-8")
+
+
+# --- Precondición del sandbox en una corrida real ----------------------------------------------------------------
+def test_una_corrida_real_sin_las_imagenes_del_sandbox_no_inicia(monkeypatch, capsys):
+    """Falla antes de gastar tokens: sin servicios, sin grafo y con el comando para construir las imágenes."""
+    monkeypatch.setattr(fabrica, "precondicion_app", lambda: None)
+    monkeypatch.setattr(fabrica, "precondicion_sandbox",
+                        lambda: "Faltan las imágenes del sandbox: fabrica-sandbox:1. Constrúyelas con:  python -m verificacion imagen_sandbox")
+
+    def no_debe_llamarse():
+        raise AssertionError("no debía crear los servicios reales")
+
+    monkeypatch.setattr(fabrica, "servicios_reales", no_debe_llamarse)
+    assert main([HISTORIA]) == 2
+    err = capsys.readouterr().err
+    assert "No se inicia la corrida" in err and "python -m verificacion imagen_sandbox" in err
+
+
+def test_con_app_sucia_el_mensaje_es_el_de_app_y_no_se_consulta_docker(monkeypatch, capsys):
+    monkeypatch.setattr(fabrica, "precondicion_app", lambda: "app/ tiene cambios sin commitear")
+    monkeypatch.setattr(fabrica, "precondicion_sandbox", lambda: pytest.fail("no debía consultar el sandbox"))
+    assert main([HISTORIA]) == 2
+    assert "cambios sin commitear" in capsys.readouterr().err
+
+
+def test_el_ensayo_no_exige_docker_ni_imagenes(monkeypatch, tmp_path):
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda prefix="": str(tmp_path))
+    monkeypatch.setattr(fabrica, "precondicion_sandbox", lambda: pytest.fail("el ensayo no usa Docker"))
+    assert main([HISTORIA, "--ensayo", "--aprobar"]) == 0
+
+
+def test_precondicion_sandbox_delega_en_el_ejecutor(monkeypatch):
+    monkeypatch.setattr(fabrica.sandbox, "precondicion", lambda: "falta algo")
+    assert precondicion_sandbox() == "falta algo"

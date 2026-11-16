@@ -33,10 +33,11 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command, interrupt
+from langgraph.types import Command, RetryPolicy, interrupt
 
 import verificacion
 from flujos import claude
+from flujos.claude import ErrorInfraestructura
 from flujos.documentador import DocumentadorReal, ResultadoDocumentacion
 from flujos.revisor import ResultadoRevision, RevisorReal, formatear_observaciones
 from validadores.contratos import Diagnostico, Observacion, preguntas_abiertas
@@ -70,6 +71,8 @@ def calcular_recursion_limit(margen: int = 10) -> int:
 
 
 RECURSION_LIMIT = calcular_recursion_limit()
+ESPERA_REINTENTO = 30.0      # s antes del segundo intento tras un fallo de infraestructura (backoff por defecto de LangGraph)
+MOTIVO_INFRAESTRUCTURA = "`claude -p` no respondió (sin JSON o tiempo agotado) tras 2 intentos"      # fijo: nunca texto crudo
 
 
 def config_de(thread_id: str) -> dict:
@@ -138,10 +141,10 @@ class Servicios:
 
 def servicios_reales() -> Servicios:
     """Servicios de verdad: `claude -p`, las verificaciones de verificacion/, el revisor real y salida/ del proyecto."""
-    return Servicios(ejecutar=claude.ejecutar, verificar=verificacion.verificar, salida=RAIZ / "salida",
+    return Servicios(ejecutar=claude.ejecutar_exigiendo, verificar=verificacion.verificar, salida=RAIZ / "salida",
                      app=RAIZ / "app", registros=RAIZ / "registros",
-                     revisor=RevisorReal(ejecutar=claude.ejecutar, raiz=RAIZ, modelo=MODELOS["revisar"]),
-                     documentador=DocumentadorReal(ejecutar=claude.ejecutar, raiz=RAIZ, modelo=MODELOS["documentar"]))
+                     revisor=RevisorReal(ejecutar=claude.ejecutar_exigiendo, raiz=RAIZ, modelo=MODELOS["revisar"]),
+                     documentador=DocumentadorReal(ejecutar=claude.ejecutar_exigiendo, raiz=RAIZ, modelo=MODELOS["documentar"]))
 
 
 def _git_raiz(*args: str, raiz: Path = RAIZ) -> subprocess.CompletedProcess:
@@ -335,6 +338,12 @@ def nodo_construir(sv: Servicios, s: Estado) -> dict:
 
     OJO, intencional: el subagente desarrollador ya tiene su propia compuerta (SubagentStop, máx 2), así que con
     el reintento del grafo son hasta 3 intentos de corregir antes de escalar.
+
+    Reintento por infraestructura (RetryPolicy): si `claude -p` no responde, LangGraph repite el nodo ENTERO. La huella
+    de app/ se mide DENTRO de cada intento, así que un intento cortado a medias pudo dejar cambios en app/ y el
+    reintento parte de esa huella ya modificada: si el reintento no vuelve a tocar app/, cuenta como intento fallido
+    aunque el código a medias fuera bueno. No se cambia la lógica: es preferible escalar a dar por bueno un cambio que
+    nadie verificó.
     """
     hu = s["hu"]
     intentos = s.get("intentos", 0)
@@ -562,8 +571,22 @@ def tras_revisar(s: Estado) -> str:
 
 
 # --- Grafo -------------------------------------------------------------------------------------------
-def construir_grafo(sv: Servicios, checkpointer) -> CompiledStateGraph:
+LLAMAN_AL_MODELO = {"filtrar", "analizar", "disenar", "planificar", "construir", "desplegar", "automatizar",
+                    "triage", "corregir_codigo", "corregir_pruebas", "corregir_despliegue", "revisar", "documentar"}
+
+
+def politica_de_reintento(espera: float = ESPERA_REINTENTO) -> RetryPolicy:
+    """Reintenta SOLO ErrorInfraestructura, una vez (2 intentos), esperando `espera` s con el backoff por defecto.
+
+    Un fallo de infraestructura de `claude -p` rara vez se resuelve en el segundo siguiente, de ahí la espera de ~30 s.
+    Un artefacto inválido no lanza esta excepción: no se reintenta y escala como siempre.
+    """
+    return RetryPolicy(max_attempts=2, initial_interval=espera, retry_on=ErrorInfraestructura)
+
+
+def construir_grafo(sv: Servicios, checkpointer, espera_reintento: float = ESPERA_REINTENTO) -> CompiledStateGraph:
     """Arma y compila el grafo de la fábrica con los servicios dados y un checkpointer (SqliteSaver)."""
+    reintento = politica_de_reintento(espera_reintento)
     g = StateGraph(Estado)
     nodos = {"filtrar": nodo_filtrar, "analizar": nodo_analizar, "preguntas": nodo_preguntas,
              "disenar": nodo_disenar, "planificar": nodo_planificar, "aprobar_plan": nodo_aprobar_plan,
@@ -572,8 +595,8 @@ def construir_grafo(sv: Servicios, checkpointer) -> CompiledStateGraph:
              "corregir_pruebas": nodo_corregir_pruebas, "corregir_despliegue": nodo_corregir_despliegue,
              "revisar": nodo_revisar, "documentar": nodo_documentar, "reporte": nodo_reporte}
     for nombre, fn in nodos.items():
-        g.add_node(nombre, lambda s, fn=fn: fn(sv, s))
-    g.add_node("triage", lambda s: nodo_triage(sv, s),
+        g.add_node(nombre, lambda s, fn=fn: fn(sv, s), retry_policy=reintento if nombre in LLAMAN_AL_MODELO else None)
+    g.add_node("triage", lambda s: nodo_triage(sv, s), retry_policy=reintento,
                destinations=("corregir_codigo", "corregir_pruebas", "corregir_despliegue", "reporte"))
 
     g.add_edge(START, "filtrar")
@@ -654,6 +677,8 @@ def correr(app, cfg: dict, responder: Callable[[dict], str], entrada=None,
         pausa = avanzar(app, cfg, entrada, emitir)
         while pausa is not None:
             pausa = avanzar(app, cfg, Command(resume=responder(pausa)), emitir)
+    except ErrorInfraestructura:                        # RetryPolicy ya agotó sus intentos: se escala, sin traceback
+        return cortar(app, cfg, MOTIVO_INFRAESTRUCTURA)
     except GraphRecursionError:                         # un ciclo que no termina: se escala, sin traceback
         limite = cfg.get("recursion_limit", RECURSION_LIMIT)
         return cortar(app, cfg, f"se alcanzó el límite de {limite} pasos del grafo (posible ciclo sin salida)")
@@ -716,6 +741,9 @@ class Escenario:
     revisor_salida_invalida: bool = False    # la salida del revisor no valida contra Revision: debe escalar
     documentar_invalido: bool = False        # la salida del documentador no valida: debe escalar
     correccion_sin_cambios: bool = False     # el desarrollador «corrige» sin tocar app/ (la construcción inicial sí)
+    infra_fallos: int = 0                    # veces que claude -p no responde (infraestructura) al correr infra_skill
+    infra_skill: str = "/criterios"          # el skill cuya llamada falla por infraestructura
+    infra_revisor_fallos: int = 0            # veces que la llamada del revisor falla por infraestructura
     app_falla_tras_correccion: bool = False  # la app no verifica después de corregir el código
     redespliegue_falla: bool = False         # el redespliegue falla después de corregir el código
     sin_artefacto: frozenset[str] = frozenset()   # skills que «terminan» sin escribir su artefacto
@@ -735,6 +763,8 @@ PRESETS = {
     "revisor_estatico_rechaza": Escenario(revisor_estatico_rechaza=True),
     "revisor_salida_invalida": Escenario(revisor_salida_invalida=True),
     "documentar_invalido": Escenario(documentar_invalido=True),
+    "infra_una_vez": Escenario(infra_fallos=1),
+    "infra_agotada": Escenario(infra_fallos=99),
 }
 
 _GHERKIN = """# language: es
@@ -765,7 +795,7 @@ class Ensayo:
         self.verificaciones: list[str] = []
         self.bases: list[str] = []          # el commit base que el grafo le pasó al revisor en cada revisión
         self.documentaciones: list[str] = []    # el commit base de cada llamada al documentador
-        self._fallos = {"app": 0, "e2e": 0, "revision": 0, "versiones": 0}
+        self._fallos = {"app": 0, "e2e": 0, "revision": 0, "versiones": 0, "infra": 0, "infra_revisor": 0}
 
     def servicios(self) -> Servicios:
         """Los Servicios que usa el grafo, con el revisor y el documentador dobles."""
@@ -785,6 +815,9 @@ class Ensayo:
         self.prompts.append(prompt)
         self.modelos.append(modelo)
         skill = prompt.split()[0]
+        if skill == self.esc.infra_skill and self._fallos["infra"] < self.esc.infra_fallos:
+            self._fallos["infra"] += 1                  # lo que lanzaría claude.ejecutar_exigiendo sin respuesta
+            raise ErrorInfraestructura("claude -p sin respuesta (simulado)")
         hu = re.search(r"HU-\d+", prompt).group()
         carpeta = self.salida / hu
         if skill not in self.esc.sin_artefacto:
@@ -838,6 +871,9 @@ class Ensayo:
     def revisor(self, hu: str, base: str) -> ResultadoRevision:
         """Doble del revisor: según el Escenario escala, rechaza en la capa estática o en la LLM, y luego aprueba."""
         self.bases.append(base)
+        if self._fallos["infra_revisor"] < self.esc.infra_revisor_fallos:
+            self._fallos["infra_revisor"] += 1
+            raise ErrorInfraestructura("claude -p sin respuesta (simulado)")
         if self.esc.revisor_salida_invalida:
             return ResultadoRevision("escalar", motivo="salida del revisor ausente o inválida", modelo_llamado=True,
                                      costo=0.01)
@@ -936,7 +972,7 @@ def main(argv: list[str] | None = None) -> int:
         sv = servicios_reales()
     sv.salida.mkdir(parents=True, exist_ok=True)
     conexion = sqlite3.connect(sv.salida / "fabrica.sqlite", check_same_thread=False)   # las ramas corren en hilos
-    app = construir_grafo(sv, SqliteSaver(conexion))
+    app = construir_grafo(sv, SqliteSaver(conexion), espera_reintento=0.05 if args.ensayo else ESPERA_REINTENTO)
     if not args.ensayo:
         exportar_diagrama(app)
     if args.diagrama:

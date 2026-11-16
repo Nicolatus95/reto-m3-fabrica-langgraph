@@ -266,3 +266,40 @@ def test_prompt_largo_va_por_stdin(subproceso):
     assert largo not in subproceso["comando"] and subproceso["entrada"] == largo
     assert max(len(parte) for parte in subproceso["comando"]) < 1000      # ninguna parte de la línea de comandos es enorme
 
+
+
+# --- claude.ejecutar: infraestructura frente a contenido -------------------------------------------------------------
+def test_un_fallo_sin_json_es_infraestructura(monkeypatch):
+    monkeypatch.setattr(claude.shutil, "which", lambda _: "claude")
+    monkeypatch.setattr(claude.subprocess, "run",
+                        lambda c, **k: subprocess.CompletedProcess(c, 1, stdout="", stderr="no hay red"))
+    respuesta = claude.ejecutar("hola", modelo="haiku")
+    assert respuesta["infra"] is True and respuesta["is_error"] is True
+    with pytest.raises(claude.ErrorInfraestructura) as e:
+        claude.ejecutar_exigiendo("hola", modelo="haiku")
+    assert "no hay red" not in str(e.value)                       # el texto crudo no viaja en la excepción
+
+
+def test_el_tiempo_agotado_es_infraestructura(monkeypatch):
+    def agotado(*args, **kwargs):
+        raise subprocess.TimeoutExpired("claude", 1)
+
+    monkeypatch.setattr(claude.shutil, "which", lambda _: "claude")
+    monkeypatch.setattr(claude.subprocess, "run", agotado)
+    with pytest.raises(claude.ErrorInfraestructura):
+        claude.ejecutar_exigiendo("hola", modelo="haiku")
+
+
+def test_sin_claude_en_el_path_es_infraestructura(monkeypatch):
+    monkeypatch.setattr(claude.shutil, "which", lambda _: None)
+    with pytest.raises(claude.ErrorInfraestructura):
+        claude.ejecutar_exigiendo("hola", modelo="haiku")
+
+
+def test_un_is_error_dentro_de_un_json_valido_no_es_infraestructura(monkeypatch):
+    """El contenido (is_error dentro de un JSON) no se reintenta: lo juzga el artefacto, como siempre."""
+    monkeypatch.setattr(claude.shutil, "which", lambda _: "claude")
+    monkeypatch.setattr(claude.subprocess, "run", lambda c, **k: subprocess.CompletedProcess(
+        c, 1, stdout='{"is_error": true, "result": "error de la API"}', stderr=""))
+    respuesta = claude.ejecutar_exigiendo("hola", modelo="haiku")        # no lanza
+    assert respuesta["is_error"] is True and respuesta["infra"] is False

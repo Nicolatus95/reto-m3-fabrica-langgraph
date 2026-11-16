@@ -13,12 +13,16 @@ import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from flujos import fabrica
+from flujos.claude import ErrorInfraestructura
 from flujos.fabrica import (
     BLOQUEADA,
     DETENIDA,
     ESCALAR,
+    ESPERA_REINTENTO,
     LISTA,
+    LLAMAN_AL_MODELO,
     MODELOS,
+    MOTIVO_INFRAESTRUCTURA,
     RECURSION_LIMIT,
     Ensayo,
     Escenario,
@@ -30,6 +34,7 @@ from flujos.fabrica import (
     estado_inicial,
     historial,
     main,
+    politica_de_reintento,
     precondicion_app,
     reanudar,
     responder_si,
@@ -48,7 +53,7 @@ def montar(tmp_path):
         (tmp_path / "salida").mkdir(exist_ok=True)
         conexion = sqlite3.connect(tmp_path / "salida" / "fabrica.sqlite", check_same_thread=False)  # como en real
         conexiones.append(conexion)
-        app = construir_grafo(ensayo.servicios(), SqliteSaver(conexion))
+        app = construir_grafo(ensayo.servicios(), SqliteSaver(conexion), espera_reintento=0.01)
         return SimpleNamespace(app=app, ensayo=ensayo, conexion=conexion, salida=tmp_path / "salida",
                                registros=tmp_path / "registros",
                                cfg={"configurable": {"thread_id": thread}})
@@ -582,3 +587,56 @@ def test_historial_sin_base_de_datos_avisa(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(fabrica, "RAIZ", tmp_path)
     assert main(["--historial", "HU-01-x"]) == 2
     assert "todavía no hay corridas" in capsys.readouterr().err
+
+
+# --- RetryPolicy solo para infraestructura ----------------------------------------------------------------------
+def test_un_fallo_de_infraestructura_se_reintenta_y_la_corrida_termina(montar):
+    m = montar(Escenario(infra_fallos=1))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == LISTA
+    assert len(prompts_de(m, "/criterios")) == 2                    # el nodo se repitió entero una vez
+
+
+def test_infraestructura_agotada_escala_sin_traceback(montar):
+    m = montar(Escenario(infra_fallos=99))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == ESCALAR and MOTIVO_INFRAESTRUCTURA in v["cortada"]
+    assert "--reanudar HU-01-prueba" in v["cortada"] and len(prompts_de(m, "/criterios")) == 2
+    assert v["bitacora"][-1] == f"ESCALAR · {MOTIVO_INFRAESTRUCTURA}" and not prompts_de(m, "/casos")
+
+
+def test_la_corrida_cortada_por_infraestructura_se_puede_reanudar(montar):
+    m = montar(Escenario(infra_fallos=2))
+    assert correr_fabrica(m)["estado_final"] == ESCALAR
+    v = reanudar(m.app, m.cfg, responder_si)                        # la infraestructura ya «volvió»
+    assert v["estado_final"] == LISTA
+
+
+def test_un_fallo_de_infraestructura_en_el_revisor_tambien_se_reintenta(montar):
+    m = montar(Escenario(infra_revisor_fallos=1))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == LISTA and len(m.ensayo.bases) == 2
+
+
+def test_un_artefacto_invalido_no_se_reintenta(montar):
+    m = montar(Escenario(sin_artefacto=frozenset({"/criterios"})))
+    v = correr_fabrica(m)
+    assert v["estado_final"] == ESCALAR and len(prompts_de(m, "/criterios")) == 1 and "cortada" not in v
+
+
+def test_solo_los_nodos_que_llaman_al_modelo_llevan_la_politica(montar):
+    m = montar()
+    for nombre in LLAMAN_AL_MODELO | {"triage"}:
+        politica = m.app.nodes[nombre].retry_policy[0]
+        assert politica.max_attempts == 2 and politica.retry_on is ErrorInfraestructura and politica.initial_interval == 0.01
+    for nombre in ("preguntas", "aprobar_plan", "listo", "e2e", "reporte"):
+        assert not m.app.nodes[nombre].retry_policy
+    assert politica_de_reintento().initial_interval == ESPERA_REINTENTO == 30.0
+
+
+def test_cli_con_infraestructura_agotada_sale_con_1_y_reporte(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda prefix="": str(tmp_path))
+    assert main([HISTORIA, "--ensayo", "--aprobar", "--escenario", "infra_agotada"]) == 1
+    captura = capsys.readouterr()
+    assert "CORRIDA CORTADA" in captura.err and "Traceback" not in captura.err + captura.out
+    assert "sin JSON o tiempo agotado" in (tmp_path / "salida" / "HU-01" / "reporte.md").read_text(encoding="utf-8")

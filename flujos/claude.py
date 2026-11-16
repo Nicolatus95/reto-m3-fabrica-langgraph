@@ -26,7 +26,7 @@ def ejecutar(prompt: str, *, modelo: str, esquema: dict | type[BaseModel] | None
     - esquema: JSON Schema (dict) o modelo Pydantic para la salida estructurada (--json-schema).
     - herramientas: lista separada por comas para --tools; "" = sin herramientas; None = las de siempre.
     - entorno_extra: variables que se agregan al entorno del proceso hijo (por ejemplo DEFENSAS).
-    - Un fallo de infraestructura (sin `claude`, sin JSON, tiempo agotado) se devuelve con is_error=True.
+    - Un fallo de infraestructura (sin `claude`, sin JSON, tiempo agotado) se devuelve con is_error=True e infra=True.
     """
     ejecutable = shutil.which("claude")
     if ejecutable is None:
@@ -53,10 +53,26 @@ def ejecutar(prompt: str, *, modelo: str, esquema: dict | type[BaseModel] | None
         datos = json.loads(r.stdout)
     except json.JSONDecodeError:                     # no salió JSON: el proceso falló antes de responder
         return _fallo((r.stdout + r.stderr).strip()[-1500:], r.returncode)
-    return {**{campo: datos.get(campo) for campo in CAMPOS}, "codigo_salida": r.returncode}
+    return {**{campo: datos.get(campo) for campo in CAMPOS}, "codigo_salida": r.returncode, "infra": False}
 
 
 def _fallo(mensaje: str, codigo: int | None) -> dict:
     """Respuesta uniforme cuando no hubo JSON que leer."""
     return {"result": mensaje, "structured_output": None, "total_cost_usd": None, "duration_ms": None,
-            "is_error": True, "codigo_salida": codigo}
+            "is_error": True, "codigo_salida": codigo, "infra": True}
+
+
+class ErrorInfraestructura(Exception):
+    """`claude -p` no respondió (sin `claude`, sin JSON o tiempo agotado): un fallo de infraestructura, no de contenido.
+
+    Es lo único que el grafo reintenta (RetryPolicy). Un artefacto inválido o un `is_error` que viene dentro de un
+    JSON válido NO son infraestructura: siguen el camino de siempre (escalar).
+    """
+
+
+def ejecutar_exigiendo(prompt: str, **kwargs) -> dict:
+    """Como `ejecutar`, pero un fallo de infraestructura lanza ErrorInfraestructura (con el motivo, nunca el texto crudo)."""
+    respuesta = ejecutar(prompt, **kwargs)
+    if respuesta.get("infra"):
+        raise ErrorInfraestructura(f"claude -p sin respuesta (código de salida {respuesta.get('codigo_salida')})")
+    return respuesta

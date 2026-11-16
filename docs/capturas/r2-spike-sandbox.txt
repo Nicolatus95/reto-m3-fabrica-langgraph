@@ -1,0 +1,22 @@
+Salida de: python -m spikes.probar_sandbox --e2e   (15 de noviembre de 2026, ~18:48, commit 6a9c145)
+(Los caracteres acentuados se perdieron por la codificación de la consola de Windows al capturar.)
+
+== Prueba hostil · red: none ==
+26 passed in 0.11s
+
+== Prueba hostil · red: fabrica_sandbox ==
+26 passed in 0.15s
+
+Carpeta de pruebas y señuelo intactos: OK
+
+== Suite e2e real (HU-01 a HU-03) dentro del sandbox ==
+48 passed, 1 warning in 19.34s -> OK
+
+SPIKE: OK {'sin red': True, 'red interna': True}
+
+Cada una de las 26 comprobaciones pasa solo si el ataque FALLA: no lee el señuelo ni rutas del
+anfitrión; no ve el repo ni /mnt/c; no recibe variables del anfitrión (centinela y clave ANTHROPIC
+falsa no llegan); no escribe en /work, /etc, /usr, /opt ni /ms-playwright ni borra lo montado; no
+sale a Internet (ni 1.1.1.1:443 ni DNS); no es root, CapEff = 0 y NoNewPrivs = 1.
+Control negativo: con la red normal (bridge), la comprobación de Internet NO se cumple (la conexión
+sí sale), así que la prueba no es vacía.

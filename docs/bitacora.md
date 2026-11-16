@@ -437,6 +437,201 @@ Registro de decisiones, iteraciones, hallazgos y resultados. Las capturas citada
 - **Lección:** «verificado» debe decir contra qué. El documento nombra su fuente de verificación y
   marca lo que no pudo verificar, en vez de descartarlo.
 
+## Fase 2 · Cobertura de LangGraph (decisión antes de la corrida real)
+- La rúbrica pide "todas las features de LangGraph" para el nivel sobresaliente. Ya se usaban:
+  `StateGraph` con reducers, aristas fijas y condicionales, fan-out y fan-in, `Command(goto)`,
+  `interrupt` y `Command(resume)`, `SqliteSaver` con `thread_id` y reanudación, y `draw_mermaid`.
+- **Decisión:** se agregan solo las que tienen un papel real en la fábrica:
+  - streaming (`stream_mode="updates"`), para ver el avance nodo por nodo; con `invoke` la
+    corrida quedaba muda;
+  - `recursion_limit` explícito, el tope global de pasos;
+  - `--historial` con `get_state_history`, que hace visibles los checkpoints;
+  - `RetryPolicy` **solo para fallos de infraestructura** (`claude -p` sin respuesta o fuera de
+    tiempo). Un artefacto inválido sigue escalando: reintentar el contenido iría contra "juzgar
+    por el artefacto";
+  - un **subgrafo** para el ciclo de corrección (triage → corregir_* → e2e), que encapsula el
+    único bucle con supervisor.
+- **No se usan, a propósito:** `Send` (en este flujo no hay paralelismo dinámico: las dos ramas
+  son fijas) y `Store` (no hay memoria entre corridas que guardar). Forzarlas debilitaría el
+  diseño; se justifican en la entrega.
+- **Lección:** una característica se usa porque resuelve un problema del sistema, no para marcar
+  una casilla. La justificación de lo que no se usó también es evidencia de criterio.
+
+- **Revisión del plan de cobertura (chat).** Se aprueban las dos decisiones que la constructora
+  pidió confirmar: el subgrafo tiene su propio `e2e`, y el reintento repite el nodo completo.
+  Ajustes:
+  - `RetryPolicy` con espera inicial (~30 s): un fallo de infraestructura de `claude -p` rara vez
+    se arregla en el siguiente segundo.
+  - Si los reducers se duplican con el subgrafo, la solución es el envoltorio que devuelve solo
+    los cambios. Como el envoltorio deja de verse en el diagrama con `xray`, el subgrafo se exporta
+    aparte en `docs/grafo-correccion.mmd`.
+  - `construir` mide la huella de `app/` dentro de cada intento: un intento cortado pudo dejar
+    cambios a medias, y entonces el reintento no debe juzgarse con la huella del primer intento.
+    Se acepta y se documenta.
+
+- **Implementado** (commits `7433fa3` streaming, `9d56379` `recursion_limit`, `5042a98`
+  `--historial`, `fd71232` `RetryPolicy` y `1ccacc7` subgrafo):
+  - Streaming nodo por nodo, con los nodos del subgrafo prefijados (`correccion/triage`) y el
+    costo acumulado leído del estado.
+  - `recursion_limit` = 37: 27 pasos del peor camino más 10 de margen; los caminos reales más
+    largos usan 17 o 18. Si se alcanza el límite, escala, escribe `reporte.md`, sale con código 1 y
+    el thread queda reanudable.
+  - `RetryPolicy(max_attempts=2, initial_interval=30 s)` solo para `ErrorInfraestructura`: sin
+    JSON, sin `claude` en el PATH o tiempo agotado. Un `is_error` dentro de un JSON válido no
+    cuenta. El error se lanza sin el texto crudo.
+- **Hallazgo (comprobado con una prueba):** un subgrafo compilado con el mismo `Estado`, agregado
+  como nodo, duplica los campos con reducer, porque el principal fusiona la salida completa. En el
+  ensayo `e2e_codigo` el costo salía 0.18 USD en lugar de 0.10, con la bitácora repetida. Se
+  resolvió con un envoltorio (`nodo_correccion`) que arranca el subgrafo con los acumulados en
+  blanco y devuelve solo los cambios. Por eso `xray` ya no muestra el interior y el subgrafo se
+  exporta aparte en `docs/grafo-correccion.mmd`.
+- Límite aceptado: si una corrección se corta por infraestructura, al reanudar el subgrafo vuelve
+  a correr desde el principio. Es seguro, pero repite llamadas.
+- Resultado: **186 pruebas** en verde, ruff limpio y los ensayos `lista`, `e2e_codigo`,
+  `revisor_rechaza`, `documentar_invalido` e `infra_una_vez`. Revisión externa del chat: sin
+  hallazgos.
+- **Lección:** "reintentar" solo tiene sentido si se distingue la infraestructura del contenido.
+  Un fallo sin JSON se reintenta; un artefacto inválido no, porque repetir la misma pregunta no
+  arregla una mala respuesta.
+- **Lección:** una prueba que compara contra un valor esperado (el costo de 0.10) detectó un error
+  que el diagrama y los nombres de nodo nunca habrían mostrado: el estado se veía correcto, pero
+  las cuentas no cuadraban.
+
+## Fase 2 · Sandbox de ejecución (`682301b`, `a6930d7`, `a8b1105`)
+- El código de los agentes ya no corre en el anfitrión. Las verificaciones de app, pruebas y e2e
+  pasan por un `docker run` endurecido: `--read-only` con tmpfs, `--cap-drop ALL`,
+  `no-new-privileges`, usuario no root, límites de memoria, CPU y pids, `--pull never`, sin el
+  entorno del anfitrión y con montajes `--mount ... readonly`. Si Docker no está disponible, las
+  verificaciones fallan: no hay respaldo en el anfitrión.
+- Imágenes: `fabrica-sandbox:1` (3.93 GB, Playwright con versiones fijadas, usuario `pwuser`) y
+  `fabrica-sandbox-node:1` (326 MB, usuario `node`). Se construyen solo con
+  `python -m verificacion imagen_sandbox`. Una corrida real no arranca si faltan las imágenes o
+  Docker.
+- `despliegue` queda limitado a `docker compose up`, `logs` y `ps`. Cada `up`, también el que corre
+  el propio agente, pasa antes por un chequeo determinista de `docker compose config` (también en
+  `hooks/rol.py`). El chequeo rechaza `privileged`, la red o el pid del host, `cap_add`, montajes
+  fuera de `./`, el socket de Docker, contextos de build fuera de `app/`, `env_file`, `include`,
+  `extends`, `driver_opts`, `configs` y `secrets`.
+- El automatizador solo tiene `verificacion pruebas`, y nadie conserva `pytest` en el anfitrión.
+- Hallazgos de la constructora:
+  - `e2e.py` pasaba todo `os.environ` al código del agente; ahora solo `URL_API` y `URL_WEB`.
+  - `despliegue` tenía `docker` entero, lo que equivale a acceso total al anfitrión.
+  - Si el chequeo del compose solo se aplicara al redespliegue, el agente podía saltárselo
+    corriendo `up` él mismo.
+- **Revisión externa del chat. Hallazgo:** la red interna del e2e se crea con
+  `docker network create --internal fabrica_sandbox`, y si ya existe, se ignora el error. Una red
+  con ese nombre creada antes **sin** `--internal`, por ejemplo por un compose de agente que declare
+  `networks: {x: {name: fabrica_sandbox}}`, le daría Internet al sandbox del e2e sin que nada lo
+  detecte. Se corrige antes del spike: se verifica que la red existente sea interna y, si no, se
+  falla, y el chequeo del compose rechaza las redes con nombre explícito.
+- **Lección:** "si ya existe, no pasa nada" es una suposición peligrosa en seguridad. Un recurso
+  con el nombre correcto no es necesariamente el recurso correcto: hay que verificar sus
+  propiedades, no solo su nombre.
+- **Lección:** un permiso de lista blanca como `docker` entero puede ser mucho más amplio de lo que
+  parece. Se baja al subcomando mínimo, y lo que queda se revisa antes de usarse.
+- Riesgos residuales (para la entrega): `npm`, `npx` y `node` del desarrollador en el anfitrión; la
+  fase con red de `npm ci --ignore-scripts`; Chromium sin su sandbox interno (lo contiene el
+  contenedor); los `RUN` de los Dockerfiles del agente, que corren al construir; el agente principal
+  conserva `npm`, `node`, `docker`, `curl` (incluido `file://`) y `python -c`; `compose up` ejecuta
+  lo que escribe el agente, ya limitado por el chequeo; el nombre de proyecto `app` compartido; y
+  ~4.3 GB de imágenes.
+- Resultado: **269 pruebas** en verde y ruff limpio.
+- Fix (`6a9c145`): después de crear la red, se inspecciona siempre `.Internal` de
+  `fabrica_sandbox`. Si no es interna, el e2e falla sin conectar nada y sin borrar la red. El
+  chequeo del compose rechaza las redes `external` y las que tienen nombre explícito distinto de
+  `<proyecto>_<red>`. Son 12 pruebas nuevas; **281 en total**.
+- **Spike real del sandbox** (`python -m spikes.probar_sandbox --e2e`, con permiso). Evidencia:
+  `docs/capturas/r2-spike-sandbox.txt`.
+  - La prueba hostil hace 26 comprobaciones, y cada una pasa solo si el ataque falla. El código no
+    lee el señuelo ni rutas del anfitrión, no ve el repo, no recibe variables del anfitrión, no
+    escribe fuera de su carpeta, no sale a Internet (ni IP ni DNS) y no tiene privilegios
+    (`CapEff=0`, `NoNewPrivs=1`). Las 26 pasaron sin red y también en la red interna.
+  - Control negativo: con la red normal, la comprobación de Internet no se cumple, así que la
+    prueba no es vacía.
+  - El señuelo y la carpeta de pruebas quedaron intactos (comprobado con `os.stat`, sin leer el
+    señuelo).
+  - La suite e2e real (48 pruebas, HU-01 a HU-03) pasa dentro del sandbox en 19 s. La red quedó
+    interna y sin contenedores conectados.
+- **Conclusión:** el código que escriben los agentes ya se ejecuta aislado: un ataque escrito como
+  prueba no pudo leer, escribir, salir a la red ni escalar privilegios.
+- **Lección:** una prueba de seguridad solo vale si se demuestra que falla cuando la defensa no
+  está. El control negativo es lo que convierte "26 passed" en evidencia.
+- **Fase 2 cerrada de verdad**, ~1 hora antes del horario previsto.
+
+## Evaluación contra la rúbrica (nivel sobresaliente), antes de la corrida real
+- Cubierto en diseño: criterio 1 (9 agentes con rol propio) y criterio 2 (LangGraph amplio, con lo
+  que no se usa justificado). Ambos dependen de que la corrida real funcione.
+- Sin cubrir todavía: criterio 3 (flujo excepcional: falta la corrida real; todo es ensayo),
+  criterio 4 (robustez ante inputs maliciosos: falta HU-99 por el grafo y la suite de red team) y
+  criterio 5 (documentación para onboarding: fase de documentación).
+- **Hallazgo (sandbox):** el plan del reto pide "un sandbox para ejecución". La app generada corre
+  en Docker, pero las pruebas que escriben los agentes (`app/tests/`) se ejecutan en la máquina
+  anfitriona con el Python del `.venv` (`verificacion/e2e.py` y `pruebas.py`). Es código generado
+  por un agente corriendo fuera del sandbox, con acceso al repo y al usuario.
+  - Aclaración: el sandbox es un requisito del **plan del reto** (sección Seguridad), no de la
+    rúbrica. El plan dice que se evalúa "con base al cumplimiento de los requerimientos".
+  - Inventario del chat: la ejecución en el anfitrión es más amplia que las pruebas.
+    `verificacion/app.py` arranca el backend generado con uvicorn y corre `npm install` y
+    `npm run build`. `pruebas.py` importa los módulos de prueba (`--collect-only`). `e2e.py` corre
+    las pruebas completas. El desarrollador y el automatizador pueden correr `pytest`, y el
+    desarrollador también `npm` y `node`.
+  - **Decisión de Nicolas:** se agrega el sandbox antes de la corrida real. Usa una imagen propia
+    basada en Playwright y un ejecutor común con la raíz de solo lectura, sin capacidades
+    (`--cap-drop ALL`), sin el entorno del anfitrión, con montajes mínimos y la red mínima en cada
+    caso. Si Docker no está disponible, falla cerrado. Los agentes pierden `pytest` en el
+    anfitrión. Un spike hostil (leer el señuelo, escribir fuera, salir a Internet) debe fallar en
+    los tres intentos.
+
+- **Plan del sandbox (constructora), revisado en el chat.** Aportes que se aceptan:
+  - Dos puntos más del inventario: `despliegue` tiene `docker` entero en `roles.py` (un
+    `docker run --privileged -v C:\:/h` daría acceso total al anfitrión), y `compose up --build`
+    ejecuta Dockerfiles y un compose escritos por un agente.
+  - `e2e.py` pasaba todo `os.environ` al código de las pruebas.
+  - Imágenes propias (`fabrica-sandbox:1` y `fabrica-sandbox-node:1`) con versiones fijas y el
+    usuario no root `pwuser`.
+  - Montajes con `--mount ... readonly`, que fallan si la ruta no existe.
+  - Red: ninguna para las pruebas y el backend, y una red interna sin Internet para e2e.
+  - `npm ci --ignore-scripts` con red, y `npm run build` sin red.
+  - Las dependencias del backend quedan limitadas a las de la imagen, porque instalar paquetes
+    arbitrarios es ejecutar código arbitrario.
+- **Decisiones:**
+  1. `despliegue` pasa de `docker` a `docker compose`, con un chequeo determinista de
+     `docker compose config` antes de `up`: rechaza `privileged`, `network_mode: host`,
+     `pid: host`, `cap_add`, montajes fuera de `./` y el socket de Docker. Se hace ahora: es el
+     hueco más grande del inventario.
+  2. El automatizador **no** recibe `verificacion e2e`. Corre en paralelo con el despliegue, así
+     que la app puede no estar lista; solo recibe `verificacion pruebas`, y la ejecución real
+     queda en el nodo `e2e`.
+  3. Las imágenes se construyen solo con el comando explícito. Además, `main()` comprueba antes
+     de una corrida real que existen, para fallar antes de gastar tokens.
+
+## Revisión contra el plan del reto, punto por punto (antes de la corrida real)
+- **Hueco 1 · Contexto por agente.** El plan pide preparar para cada agente "tipos/interfaces,
+  ejemplos de uso y archivos relevantes con @file". Hoy ningún agente referencia archivos con `@`,
+  solo `disenador-pruebas` trae un ejemplo, y ninguno apunta a su contrato en
+  `validadores/contratos.py`.
+- **Hueco 2 · Prompt hardening en los agentes.** Solo `filtro-seguridad` trata la historia como
+  contenido no confiable. El analista lee la historia directamente después del filtro, y los demás
+  leen `salida/`, que se deriva de ella; ninguno declara que ese contenido es dato y no
+  instrucciones. El hardening hoy solo existe en el revisor y en el documentador.
+- Ambos huecos cambian el comportamiento de la corrida, así que se corrigen **antes** de ella,
+  después del sandbox.
+- Para la fase de documentación:
+  - `CLAUDE.md` menciona una carpeta `ejemplos/` que no existe.
+  - No hay `CHANGELOG`.
+  - El plan pide compilar "prompts utilizados" como evidencia: los prompts para la constructora
+    están en los chats de planeación; hay que reunirlos en `docs/prompts.md`.
+- Para la entrega: el repo es privado; quien evalúa necesita acceso (hacerlo público o invitar a
+  la persona).
+
+## Plan de cierre con fecha límite (15 de noviembre, 18:40; entrega antes de las 23:59)
+- El trabajo completo pendiente se estimó en 5 h 30 min a 7 h, y quedan unas 5 h 20 min.
+  **Decisión de Nicolas:** un solo recorte, el que más tiempo ahorra del camino crítico: la
+  documentación (README, CHANGELOG y `docs/prompts.md`) se escribe en paralelo con la corrida
+  real, sin tocar `app/`. El sandbox completo y la suite de red team se mantienen; el red team
+  corre en paralelo con la redacción del Word.
+- Regla de corte: un solo intento de arreglo de la corrida real, hasta las 21:45.
+
 ## Pendientes para el reto (anotados durante la clase)
 
 - Suite de red team con las evasiones del filtro textual (Paso 2) y comprobar qué capa detiene cada una.

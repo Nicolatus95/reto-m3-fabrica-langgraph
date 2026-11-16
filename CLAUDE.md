@@ -52,6 +52,23 @@ cambio
   y un **subgrafo** `correccion` (triage → corregir_* → e2e) montado como nodo-envoltorio que devuelve solo los cambios,
   porque con el mismo Estado los reducers duplicaban costo y bitácora. Su diagrama está en `docs/grafo-correccion.mmd`.
   No se usan `Send` ni `Store`: no tienen un papel real en este flujo.
+- **Sandbox de ejecución:** el código que escriben los agentes NO corre en el anfitrión. `verificacion/app.py`,
+  `pruebas.py` y `e2e.py` pasan por `verificacion/sandbox.py` (`docker run --rm` con `--read-only` + tmpfs,
+  `--cap-drop ALL`, `no-new-privileges`, usuario no root, límites de memoria/CPU/pids, timeout, sin entorno del anfitrión
+  y montajes mínimos de solo lectura; nunca la raíz del repo, `.venv`, `registros/` ni `secretos_demo.txt`). Redes:
+  pruebas y backend sin red; e2e en una red interna (`fabrica_sandbox`, sin Internet) a la que se conecta la app;
+  front-end en dos fases (`npm ci --ignore-scripts` con red, `npm run build` sin red). **Sin Docker la verificación
+  FALLA**, nunca vuelve al anfitrión. Las imágenes (`sandbox/Dockerfile` y `Dockerfile.node`, nuestras; ningún rol las
+  puede escribir) se construyen con `python -m verificacion imagen_sandbox` y una corrida real no arranca si faltan.
+  El backend solo puede usar las dependencias fijadas en `sandbox/Dockerfile`.
+- `hooks/roles.py`: ya no hay `pytest` en el anfitrión (el desarrollador usa `verificacion app`; el automatizador,
+  `verificacion pruebas`; el e2e lo corre solo el nodo del grafo). `despliegue` solo tiene `docker compose up/logs/ps`, y
+  antes de cada `up` (del agente o de `redesplegar`) `verificacion/compose_seguro.py` rechaza `privileged`, redes/pid del
+  anfitrión, `cap_add`, montajes fuera de `app/`, el socket de Docker, `$`, `env_file`, `include` y `extends`.
+- Riesgos residuales del sandbox: `npm`/`npx`/`node` del desarrollador siguen en el anfitrión; la fase de red de
+  `npm ci` llega al registro de npm; Chromium corre sin su sandbox interno (dentro del contenedor endurecido); los
+  Dockerfiles que escribe `despliegue` ejecutan sus `RUN` al construir (en contenedores, con red); el agente principal
+  conserva `npm`, `node`, `docker`, `curl` y `python -c` en `settings.json`.
 - `--ensayo` y `tests/` prueban las rutas del grafo sin costo (dobles, sin modelo ni Docker).
 - `registros/` es solo para personas y **ningún agente la lee, tampoco el principal**. El bloqueo está en
   `hooks/seguridad.py` (aplica a todos): Read/Glob/Grep sobre `registros/` y cualquier comando de Bash que la

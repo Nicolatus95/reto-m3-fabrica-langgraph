@@ -38,6 +38,7 @@ Todo elemento que una prueba necesite tocar lleva `data-testid` con estos nombre
 | Búsqueda y filtro | `buscar-empleados`, `filtro-departamento`, `sin-resultados` |
 | Acciones por fila | `editar-empleado-{id}`, `baja-empleado-{id}` |
 | Fecha de baja | `empleado-fecha-baja`, `confirmar-baja` |
+| Jefe directo (HU-04) | `empleado-jefe` (selector de jefe en el formulario de edición), `jefe-empleado-{id}` (celda de jefe en el directorio) |
 
 ## Reglas para quien programa
 

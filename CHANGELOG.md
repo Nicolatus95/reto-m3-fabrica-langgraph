@@ -16,6 +16,13 @@ Fase 2 del reto, cerrada y sin push.
   control negativo (sin la regla, 3b/3c pasan en `despliegue`).
 
 ### Añadido
+- **Fase 4 · Filtro de seguridad en lote** (`flujos/lote.py`): grafo `START → repartir (Send) → filtrar_una × N → reunir
+  → END` que pasa varias historias por el filtro en paralelo (`max_concurrency=4`) y escribe `salida/lote-<sello>.md`.
+  `filtrar_una` reutiliza `nodo_filtrar`; cada historia falla cerrado por separado (`bloqueada`, `falla` con el tipo de
+  la excepción, o `sin_filtrar` con `DEFENSAS=0`), con los mismos 2 intentos que la fábrica ante fallos de
+  infraestructura. El motivo no entra al estado, al checkpoint (`salida/lote.sqlite`) ni al reporte.
+  `registrar_seguridad` se protege con un `threading.Lock`. `tests/test_lote.py`: reparto con 1, 3 y 5 ramas,
+  aislamiento, motivo no filtrado, reintentos, lock con control negativo y suma de costos.
 - **Revisor real de dos capas**: análisis estático sin modelo (ruff y bandit fijados, comparación antes/después por
   archivo, regla y conteo) más una revisión con modelo sin herramientas. `4fa19ff`
 - **Nodo `documentar`**: el modelo aporta campos acotados y Python arma `documentacion.md`, verificando los endpoints contra

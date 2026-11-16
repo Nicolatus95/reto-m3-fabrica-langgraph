@@ -22,6 +22,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -215,6 +216,7 @@ def falla(paso: str, problemas: list[str], costo: float = 0.0) -> dict:
 
 
 PRIVADOS = ("motivo", "problemas")      # texto que puede venir del modelo: solo vive en registros/
+_LOCK_SEGURIDAD = threading.Lock()      # el lote (flujos/lote.py) llama a registrar_seguridad desde varios hilos a la vez
 
 
 def registrar_seguridad(sv: Servicios, hu: str, eventos: list[dict]) -> list[dict]:
@@ -225,7 +227,7 @@ def registrar_seguridad(sv: Servicios, hu: str, eventos: list[dict]) -> list[dic
     """
     completos = [{"ts": round(time.time(), 1), "hu": hu, **e} for e in eventos]
     sv.registros.mkdir(parents=True, exist_ok=True)
-    with open(sv.registros / "seguridad.jsonl", "a", encoding="utf-8") as f:
+    with _LOCK_SEGURIDAD, open(sv.registros / "seguridad.jsonl", "a", encoding="utf-8") as f:
         f.writelines(json.dumps(e, ensure_ascii=False) + "\n" for e in completos)
     return [{k: v for k, v in e.items() if k not in PRIVADOS} for e in completos]
 

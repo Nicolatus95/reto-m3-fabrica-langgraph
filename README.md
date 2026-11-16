@@ -85,6 +85,29 @@ alcanzarlo, la corrida **escala** a una persona con un mensaje, sin traceback.
 
 Nodos y modelos (`MODELOS` en `flujos/fabrica.py`): `filtrar` y `documentar` usan haiku; el resto, sonnet.
 
+### Filtro de seguridad en lote (`Send`)
+
+Antes de gastar tokens en la fábrica, puedes pasar varias historias por el filtro de seguridad a la vez:
+
+```powershell
+.venv\Scripts\python -m flujos.lote historias\HU-01-registrar-empleado.md historias\HU-99-envenenada.md
+.venv\Scripts\python -m flujos.lote --todas            # todas las historias\HU-*.md, sin backlog.md
+.venv\Scripts\python -m flujos.lote --todas --ensayo   # dobles deterministas, sin modelo
+.venv\Scripts\python -m flujos.lote --diagrama         # exporta docs/grafo-lote.mmd
+```
+
+El lote **no construye nada**. Cada historia es una rama (`Send`) que reutiliza `nodo_filtrar` de la fábrica, y corren
+hasta 4 a la vez. El resultado es `salida/lote-<AAAAMMDD-HHMMSS>.md`, con una tabla HU | estado (`ok`, `bloqueada`,
+`falla` o `sin_filtrar`), el costo total y, por cada historia `ok`, el comando para construirla. El código de salida es 0
+solo si todas salen `ok`. Cada historia falla cerrado por separado, sin detener a las demás, y el motivo del veredicto
+sigue viviendo solo en `registros/`.
+
+**¿Por qué solo el filtro va en paralelo?** Cada filtro lee una sola historia y escribe en su propia carpeta, así que las
+ramas no se pisan. El resto de la fábrica comparte estado: `app/` es una sola aplicación que cada historia modifica, el
+despliegue ocupa los puertos 8000 y 8080, y el commit base define lo que revisa el revisor. Dos construcciones en
+paralelo mezclarían cambios, tumbarían el despliegue de la otra y harían que el revisor juzgara código ajeno. Por eso
+las historias que pasan el filtro se construyen de una en una.
+
 ### Los skills de Claude Code (un paso a la vez)
 
 Dentro de una sesión de `claude` en esta carpeta:

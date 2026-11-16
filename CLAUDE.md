@@ -50,7 +50,8 @@ cambio
   `ErrorInfraestructura` (`claude -p` sin JSON, sin `claude` o tiempo agotado; un artefacto inválido NO se reintenta);
   y un **subgrafo** `correccion` (triage → corregir_* → e2e) montado como nodo-envoltorio que devuelve solo los cambios,
   porque con el mismo Estado los reducers duplicaban costo y bitácora. Su diagrama está en `docs/grafo-correccion.mmd`.
-  No se usan `Send` ni `Store`: no tienen un papel real en este flujo.
+  `Send` se usa solo en `flujos/lote.py`: el filtro de seguridad de varias historias en paralelo, sin construir nada
+  (`app/`, el despliegue y el commit base son compartidos). `Store` no se usa.
 - **Sandbox de ejecución:** el código que escriben los agentes NO corre en el anfitrión. `verificacion/app.py`,
   `pruebas.py` y `e2e.py` pasan por `verificacion/sandbox.py` (`docker run --rm` con `--read-only` + tmpfs,
   `--cap-drop ALL`, `no-new-privileges`, usuario no root, límites de memoria/CPU/pids, timeout, sin entorno del anfitrión

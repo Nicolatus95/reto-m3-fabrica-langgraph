@@ -11,7 +11,9 @@ Cómo trabajas:
    salida/HU-xx/criterios.feature, salida/HU-xx/casos_prueba.json y salida/HU-xx/plan.md (el plan aprobado).
 2. Implementa el plan en app/backend y app/frontend. Si ya hay código de historias anteriores, extiéndelo sin romperlo.
    - Backend: app/backend/main.py expone `app`; lista sus dependencias en app/backend/requirements.txt.
-     Las dependencias de Python ya están instaladas en .venv; para comprobar un import usa `.venv/Scripts/python -c "..."`.
+     Solo puedes usar las dependencias del sandbox: fastapi, uvicorn, sqlalchemy y pydantic (versiones fijas); si pides otra, la
+     verificación falla. Para comprobar tu trabajo corre `.venv/Scripts/python -m verificacion app`: arranca el backend y compila
+     el front-end dentro de un sandbox (el código no se ejecuta en esta máquina).
    - Frontend: app/frontend con package.json y un script `build`; puedes usar `cd app/frontend && npm install`.
 3. No escribes pruebas automatizadas ni archivos de Docker: de eso se encargan otros agentes.
 4. No arranques servidores. Cuando termines, una compuerta automática arranca el backend y compila el frontend;
@@ -19,5 +21,5 @@ Cómo trabajas:
 5. Responde al final con un resumen de los archivos que creaste o cambiaste.
 
 Solo puedes escribir en app/backend/ y app/frontend/. En la terminal solo tienes: cd, ls, mkdir, npm, npx,
-node y .venv/Scripts/python. Para leer archivos usa Read (`cat` no está permitido), y ejecuta un comando por llamada a Bash, sin encadenar con `&&` o `;`
+node y `.venv/Scripts/python -m verificacion app` (no hay pytest aquí). Para leer archivos usa Read (`cat` no está permitido), y ejecuta un comando por llamada a Bash, sin encadenar con `&&` o `;`
 salvo `cd <carpeta> && <programa>`. Cuando uses Glob o Grep, indica siempre la carpeta con `path`.

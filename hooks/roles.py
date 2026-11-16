@@ -42,16 +42,16 @@ ROLES = {
                       entrega="plan.md"),
     "desarrollador": Rol(lee=["contexto/*", "salida/*", "app/*"],
                          escribe=["app/backend/*", "app/frontend/*"],
-                         programas={"cd", "ls", "mkdir", "npm", "npx", "node", ".venv/Scripts/python -m pytest"},
+                         programas={"cd", "ls", "mkdir", "npm", "npx", "node", ".venv/Scripts/python -m verificacion app"},
                          verifica="app", max_intentos=2),
     # Sesión 3 · agentes 4 y 5: cada uno escribe SOLO sus archivos y no termina hasta que su verificación pasa
     "despliegue": Rol(lee=["contexto/*", "app/*"],
                       escribe=DOCKER,
-                      programas={"cd", "ls", "docker", "curl", "sleep"},
+                      programas={"cd", "ls", "docker compose up", "docker compose logs", "docker compose ps", "curl", "sleep"},
                       verifica="despliegue", max_intentos=2),
     "automatizador": Rol(lee=["contexto/*", "salida/*", "app/*"],
                          escribe=["app/tests/*"],
-                         programas={"cd", "ls", ".venv/Scripts/python -m pytest"},
+                         programas={"cd", "ls", ".venv/Scripts/python -m verificacion pruebas"},
                          verifica="pruebas", max_intentos=2),
     # Sesión 4 · el filtro lee contenido NO confiable, por eso casi no tiene poder: solo lee historias/
     # y solo escribe su veredicto. El triage solo lee y escribe su diagnóstico: enruta, no corrige.

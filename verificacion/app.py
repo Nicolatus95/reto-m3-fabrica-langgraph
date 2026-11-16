@@ -1,36 +1,54 @@
 """Sesión 2 · ¿La app que escribió el desarrollador funciona? Lo decide el código, no el agente.
 
-- Backend: arranca en el puerto 8010 y `GET /api/salud` debe responder.
+- Backend: arranca y `GET /api/salud` debe responder.
 - Frontend: `npm run build` debe terminar sin errores.
-"""
-import subprocess
-import sys
 
-from verificacion.comun import APP, correr, responde
+Todo corre en el sandbox (verificacion/sandbox.py), nunca en el anfitrión; sin Docker, falla.
+- Backend: sin red; sandbox/verificar_backend.py arranca uvicorn dentro del contenedor y sondea por loopback.
+- Frontend en dos fases, con un volumen temporal de Docker para node_modules:
+    1. `npm ci --ignore-scripts` (CON red, la opción mínima: npm necesita el registro; sin scripts de ciclo de vida, así
+       ningún paquete ejecuta código al instalarse);
+    2. `npm run build` SIN red, con la fuente en solo lectura copiada a /tmp.
+"""
+import secrets
+
+from verificacion import sandbox
+from verificacion.comun import APP
+
+CONSTRUIR = ("mkdir /tmp/app && cd /in && tar cf - --exclude=./node_modules --exclude=./dist . | tar xf - -C /tmp/app "
+             "&& ln -s /deps/node_modules /tmp/app/node_modules && cd /tmp/app && npm run build")
 
 
 def verificar_backend() -> tuple[bool, str]:
     if not (APP / "backend" / "main.py").exists():
         return False, "No existe app/backend/main.py"
-    proceso = subprocess.Popen([sys.executable, "-m", "uvicorn", "main:app", "--port", "8010"],
-                               cwd=APP / "backend", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    try:
-        ok, log = responde("http://127.0.0.1:8010/api/salud", intentos=20)
-    finally:
-        proceso.terminate()
-        salida = proceso.communicate(timeout=10)[0]
-    return ok, log if ok else f"{log}\n{salida[-3000:]}"
+    r = sandbox.ejecutar(sandbox.IMAGEN, ["python", "/opt/verificar_backend.py"],
+                         montajes=[sandbox.Montaje(APP / "backend", "/src")], red="none",
+                         limites=sandbox.LIMITES_BACKEND, timeout=120)
+    return r.ok, r.salida
 
 
 def verificar_frontend() -> tuple[bool, str]:
     carpeta = APP / "frontend"
     if not (carpeta / "package.json").exists():
         return False, "No existe app/frontend/package.json"
-    if not (carpeta / "node_modules").exists():
-        ok, log = correr(["npm", "install"], carpeta)
-        if not ok:
-            return False, log
-    return correr(["npm", "run", "build"], carpeta)
+    instalar = "npm ci" if (carpeta / "package-lock.json").exists() else "npm install"
+    volumen = f"fabrica-npm-{secrets.token_hex(4)}"
+    entrada = sandbox.Montaje(carpeta, "/in")
+    nodos = sandbox.Volumen(volumen, "/deps")
+    try:
+        fase1 = sandbox.ejecutar(
+            sandbox.IMAGEN_NODE, ["sh", "-c", f"cp /in/package.json /deps/ && (cp /in/package-lock.json /deps/ 2>/dev/null; true) "
+                                              f"&& cd /deps && {instalar} --ignore-scripts --no-audit --no-fund"],
+            montajes=[entrada], volumenes=[nodos], red="bridge", limites=sandbox.LIMITES_NODE, timeout=600,
+            usuario="node", directorio="/deps")
+        if not fase1.ok:
+            return False, f"## {instalar} (sandbox, con red)\n{fase1.salida}"
+        fase2 = sandbox.ejecutar(sandbox.IMAGEN_NODE, ["sh", "-c", CONSTRUIR], montajes=[entrada], volumenes=[nodos],
+                                 red="none", limites=sandbox.LIMITES_NODE, timeout=600, usuario="node", directorio="/deps")
+        return fase2.ok, fase2.salida
+    finally:
+        sandbox.lanzar(["docker", "volume", "rm", "-f", volumen], 30)
 
 
 def verificar(hu: str | None = None) -> tuple[bool, str]:

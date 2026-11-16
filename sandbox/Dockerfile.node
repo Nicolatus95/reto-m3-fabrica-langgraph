@@ -1,0 +1,11 @@
+# Imagen del sandbox para el front-end (nuestra). Dos fases, ambas como usuario «node» (no root):
+#   1. npm ci --ignore-scripts   (con red, sin scripts de ciclo de vida) → node_modules en un volumen temporal
+#   2. npm run build             (SIN red)
+# Se construye una vez:  python -m verificacion imagen_sandbox   →  fabrica-sandbox-node:1
+FROM node:22-slim
+
+# /deps es el destino del volumen temporal: existe y es de «node» para que el volumen nuevo herede ese dueño
+RUN mkdir /deps && chown node:node /deps
+
+USER node
+WORKDIR /deps

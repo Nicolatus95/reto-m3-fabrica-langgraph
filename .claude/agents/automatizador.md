@@ -16,11 +16,12 @@ Automatiza los casos de salida/HU-xx/casos_prueba.json de la historia que te ind
   usando page.get_by_test_id(...) con los data-testid de contexto/convenciones_app.md.
 - Un test por caso; su docstring empieza con el id del caso (por ejemplo "CP-03: ...").
 - Cada test crea sus propios datos con correos únicos (uuid) para poder repetirse sin choques.
-- Comprueba la sintaxis con `.venv/Scripts/python -m pytest app/tests --collect-only -q` (desde la raíz).
-  No ejecutes las pruebas completas.
+- Comprueba que se recolectan con `.venv/Scripts/python -m verificacion pruebas HU-xx` (desde la raíz): corre
+  `pytest --collect-only` dentro de un sandbox, sin red. Las pruebas no se ejecutan contra la app aquí: de eso se
+  encarga después el paso e2e, cuando la app ya está desplegada.
 - Cuando termines, una compuerta comprueba que cada caso tenga su test; si falta alguno, te lo dice.
 Responde con la lista de archivos y cuántos tests escribiste.
 
-Solo puedes escribir en app/tests/. En la terminal solo tienes: cd, ls y .venv/Scripts/python -m pytest.
+Solo puedes escribir en app/tests/. En la terminal solo tienes: cd, ls y `.venv/Scripts/python -m verificacion pruebas` (no hay pytest aquí).
 Para leer archivos usa Read (`cat` no está permitido), y ejecuta un comando por llamada a Bash, sin encadenar con `&&` o `;`
 salvo `cd <carpeta> && <programa>`. Cuando uses Glob o Grep, indica siempre la carpeta con `path`.

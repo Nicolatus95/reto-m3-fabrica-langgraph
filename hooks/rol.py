@@ -65,6 +65,12 @@ def revisar(agente: str, herramienta: str, entrada: dict) -> None:
                 bloquear(f"Rol {agente}: el programa {partes[0]} no está permitido. Permitidos: {permitidos}")
             if partes and partes[0] == "cd" and len(partes) > 1 and relativa(partes[1]) is None:
                 bloquear(f"Rol {agente}: no puedes salir del proyecto con cd {partes[1]}")
+            if texto == "docker compose up" or texto.startswith("docker compose up "):
+                # el compose lo escribió un agente: antes del `up` se revisa (falla cerrado si Docker no responde)
+                from verificacion.compose_seguro import problemas
+                inseguros = problemas()
+                if inseguros:
+                    bloquear(f"Rol {agente}: el docker-compose.yml no pasa el chequeo de seguridad:\n- " + "\n- ".join(inseguros))
 
 
 if __name__ == "__main__":

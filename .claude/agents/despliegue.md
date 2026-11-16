@@ -19,6 +19,9 @@ Despliega la aplicación de app/:
 5. Cuando termines, una compuerta comprueba las URL; si fallan, te devuelve el log: corrige y vuelve a terminar.
 Responde con las URL de la aplicación y de la documentación de la API.
 
-Solo puedes escribir los archivos de Docker listados arriba. En la terminal solo tienes: cd, ls, docker, curl, sleep.
+Solo puedes escribir los archivos de Docker listados arriba. En la terminal solo tienes: cd, ls, curl, sleep y tres subcomandos de Docker: `docker compose up`, `docker compose logs` y
+`docker compose ps` (nada de `docker run`). Antes de cada `docker compose up` un chequeo automático revisa el docker-compose.yml:
+rechaza `privileged`, `network_mode`/`pid` del anfitrión, `cap_add`, montajes fuera de ./, el socket de Docker, contextos de build
+fuera de app/, variables con `$`, `env_file`, `include` y `extends`; si lo rechaza, te dice por qué: corrígelo.
 Para leer archivos usa Read (`cat` no está permitido), y ejecuta un comando por llamada a Bash, sin encadenar con `&&` o `;`
 salvo `cd <carpeta> && <programa>`. Cuando uses Glob o Grep, indica siempre la carpeta con `path`.

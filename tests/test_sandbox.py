@@ -44,6 +44,7 @@ class DockerFalso:
         self.agota_el_tiempo = False
         self.servicios = {"backend": "id-back", "frontend": "id-front"}
         self.al_correr = None                       # callback(argv) en cada `docker run`
+        self.red_interna: str | None = "true"       # lo que dice `docker network inspect --format {{.Internal}}` (None = no existe)
         self.config = None                          # lo que devuelve `docker compose config --format json` (None = falla)
 
     def __call__(self, argv: list[str], timeout: int):
@@ -58,6 +59,8 @@ class DockerFalso:
             if self.al_correr:
                 self.al_correr(argv)
             return completado(self.codigos_run.pop(0) if self.codigos_run else 0, self.salida_run)
+        if argv[:3] == ["docker", "network", "inspect"]:
+            return completado(0, self.red_interna + "\n") if self.red_interna is not None else completado(1, "")
         if argv[:2] == ["docker", "compose"] and "config" in argv:
             return completado(0, json.dumps(self.config)) if self.config is not None else completado(1, "")
         if "ps" in argv and "-q" in argv:
@@ -300,6 +303,37 @@ def test_e2e_crea_la_red_interna_conecta_la_app_con_alias_y_la_desconecta(docker
     assert {a[-1] for a in desconectar} == {"id-back", "id-front"}
 
 
+@pytest.mark.parametrize("interna", ["false", "", "<no value>"])
+def test_e2e_falla_si_la_red_ya_existe_y_no_es_interna(docker, sin_anfitrion, salida, interna):
+    """Un create que falla porque la red ya existe se ignora; pero si no es --internal el e2e tendría Internet."""
+    docker.red_interna = interna
+    ok, log = verificacion.e2e.verificar("HU-01")
+    assert not ok and "NO es interna" in log and f"docker network rm {sandbox.RED_E2E}" in log
+    assert not docker.corridas()                                           # no corrieron las pruebas
+    assert not [a for a in docker.llamadas if a[:3] in (["docker", "network", "connect"], ["docker", "network", "rm"])]
+    assert "NO es interna" in (salida / "HU-01" / "fallos.md").read_text(encoding="utf-8")
+
+
+def test_la_red_se_inspecciona_despues_del_create_y_antes_de_conectar(docker, salida):
+    verificacion.e2e.verificar("HU-01")
+    nombres = [tuple(a[:3]) for a in docker.llamadas]
+    assert nombres.index(("docker", "network", "create")) < nombres.index(("docker", "network", "inspect")) \
+        < nombres.index(("docker", "network", "connect"))
+    inspeccion = next(a for a in docker.llamadas if a[:3] == ["docker", "network", "inspect"])
+    assert inspeccion == ["docker", "network", "inspect", sandbox.RED_E2E, "--format", "{{.Internal}}"]
+
+
+def test_e2e_falla_si_la_red_no_se_pudo_crear_ni_existe(docker, salida):
+    docker.red_interna = None
+    ok, log = verificacion.e2e.verificar("HU-01")
+    assert not ok and "No existe la red" in log and not docker.corridas()
+
+
+def test_con_la_red_interna_el_e2e_sigue_igual(docker, salida):
+    ok, _ = verificacion.e2e.verificar("HU-01")
+    assert ok and len(docker.corridas()) == 1
+
+
 def test_e2e_sin_la_app_desplegada_falla_sin_correr_las_pruebas(docker, salida):
     docker.servicios = {}
     ok, log = verificacion.e2e.verificar("HU-01")
@@ -340,7 +374,7 @@ def test_los_dockerfiles_fijan_versiones_y_no_corren_como_root():
 
 # --- compose seguro --------------------------------------------------------------------------------------------------
 def compose_base() -> dict:
-    return {"services": {
+    return {"name": "app", "networks": {"default": {"name": "app_default", "ipam": {}}}, "services": {
         "backend": {"build": {"context": str(APP / "backend")},
                     "volumes": [{"type": "bind", "source": str(APP / "backend" / "datos"), "target": "/app/datos"}]},
         "frontend": {"build": {"context": str(APP / "frontend")}}}}
@@ -374,6 +408,25 @@ def test_un_compose_peligroso_se_rechaza(cambio, esperado):
     config["services"]["backend"] = {**config["services"]["backend"], **cambio}
     problemas = compose_seguro.evaluar(config, "services:\n")
     assert problemas and any(esperado in p for p in problemas), problemas
+
+
+@pytest.mark.parametrize("redes, esperado", [
+    ({"x": {"name": "fabrica_sandbox"}}, "nombre explícito"),                       # networks: {x: {name: fabrica_sandbox}}
+    ({"default": {"name": "fabrica_sandbox"}}, "nombre explícito"),
+    ({"default": {"name": "app_default", "external": True}}, "external"),
+    ({"fabrica_sandbox": {"name": "fabrica_sandbox", "external": True}}, "external"),
+    ({"x": {"name": "otra_red_cualquiera"}}, "nombre explícito"),
+])
+def test_redes_con_nombre_explicito_o_externas_se_rechazan(redes, esperado):
+    config = {**compose_base(), "networks": redes}
+    problemas = compose_seguro.evaluar(config, "")
+    assert any(esperado in p for p in problemas), problemas
+
+
+def test_las_redes_normales_del_compose_pasan():
+    config = {**compose_base(), "networks": {"default": {"name": "app_default"}, "interna": {"name": "app_interna"}}}
+    assert compose_seguro.evaluar(config, "") == []
+    assert compose_seguro.evaluar({**compose_base(), "networks": {"default": None}}, "") == []
 
 
 def test_volumenes_y_secretos_de_nivel_superior_se_rechazan():

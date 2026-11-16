@@ -4,7 +4,7 @@ El agente de despliegue escribe ese archivo, y `up` lo ejecuta con Docker: un co
 anfitrión o el socket de Docker, correr `privileged` o compartir la red y los procesos del anfitrión. Aquí se normaliza con
 `docker compose config --format json` (rutas ya absolutas, sin atajos) y se rechaza lo peligroso.
 
-Rechaza: privileged, network_mode/pid/ipc/uts/userns_mode/cgroup compartidos con el anfitrión u otro contenedor, cap_add,
+Rechaza: redes external o con nombre explícito (name:), privileged, network_mode/pid/ipc/uts/userns_mode/cgroup compartidos con el anfitrión u otro contenedor, cap_add,
 devices, security_opt, montajes (bind) fuera de app/, el socket o la tubería de Docker, contextos de build fuera de app/,
 volúmenes con driver_opts, configs/secrets con archivos, y en el texto: interpolación de variables ($), env_file, include
 y extends (leerían archivos o variables del anfitrión que `config` ya no distingue).
@@ -70,6 +70,14 @@ def evaluar(config: dict, texto: str, app: Path = APP) -> list[str]:
         for contexto in contextos:
             if contexto and not _dentro(str(contexto), app):
                 mal(f"el contexto de build {contexto} está fuera de app/")
+    proyecto = config.get("name") or app.resolve().name
+    for clave, red in (config.get("networks") or {}).items():
+        red = red or {}
+        if red.get("external"):
+            problemas.append(f"red «{clave}»: external no está permitido (usaría una red que ya existe, como fabrica_sandbox)")
+        elif red.get("name") not in (None, f"{proyecto}_{clave}"):
+            problemas.append(f"red «{clave}»: nombre explícito {red.get('name')!r} no permitido (podría ocupar una red del "
+                             f"sandbox como fabrica_sandbox); la red debe llamarse {proyecto}_{clave}")
     for nombre, volumen in (config.get("volumes") or {}).items():
         if (volumen or {}).get("driver_opts"):
             problemas.append(f"volumen «{nombre}»: driver_opts no está permitido (podría montar rutas del anfitrión)")

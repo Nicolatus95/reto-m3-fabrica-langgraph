@@ -191,12 +191,33 @@ def carpeta_de_salida() -> Path:
     return carpeta
 
 
+def error_de_red_e2e() -> str:
+    """La red del e2e debe SER interna (sin Internet), no solo llamarse así. Si no lo es, no se usa ni se borra.
+
+    Un `create` que falla porque la red ya existe se ignora, pero esa red pudo crearla otro (p. ej. un compose de agente con
+    `networks: {x: {name: fabrica_sandbox}}`) sin `--internal`: el e2e tendría Internet. Se inspecciona siempre.
+    """
+    try:
+        r = lanzar(["docker", "network", "inspect", RED_E2E, "--format", "{{.Internal}}"], 30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"No se pudo inspeccionar la red {RED_E2E} ({type(e).__name__}): el e2e no corre."
+    if r.returncode != 0:
+        return f"No existe la red {RED_E2E} y no se pudo crear: el e2e no corre.\n{(r.stderr or r.stdout).strip()[-300:]}"
+    if r.stdout.strip() != "true":
+        return (f"La red {RED_E2E} ya existe y NO es interna (tendría acceso a Internet): el e2e no corre. "
+                f"No se borra ni se reutiliza: revísala y bórrala tú con  docker network rm {RED_E2E}")
+    return ""
+
+
 def conectar_app_a_red_e2e(servicios: Sequence[str] = ("backend", "frontend")) -> tuple[list[str], str]:
     """Crea la red interna y conecta a ella los contenedores de la app (alias = nombre del servicio).
 
     Devuelve (ids conectados, error). Sin Internet: la red es --internal; la app conserva su red normal.
     """
-    lanzar(["docker", "network", "create", "--internal", RED_E2E], 30)       # si ya existe, falla sin consecuencias
+    lanzar(["docker", "network", "create", "--internal", RED_E2E], 30)       # si ya existe, este create falla
+    error = error_de_red_e2e()                                               # ...y entonces podría no ser interna
+    if error:
+        return [], error
     ids: list[str] = []
     for servicio in servicios:
         r = lanzar(["docker", "compose", "-f", str(APP / "docker-compose.yml"), "--project-directory", str(APP),

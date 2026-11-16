@@ -115,7 +115,10 @@ def main() -> int:
     try:
         resultados["sin red"] = correr_hostil("none", tests, carpeta)
         subprocess.run(["docker", "network", "create", "--internal", sandbox.RED_E2E], capture_output=True, check=False)
-        resultados["red interna"] = correr_hostil(sandbox.RED_E2E, tests, carpeta)
+        error_red = sandbox.error_de_red_e2e()                  # la red debe SER interna, no solo llamarse así
+        if error_red:
+            print(error_red)
+        resultados["red interna"] = not error_red and correr_hostil(sandbox.RED_E2E, tests, carpeta)
         intacto = listado(carpeta) == antes_tests and (antes_senuelo is None or firma(senuelo) == antes_senuelo)
         print(f"\nCarpeta de pruebas y señuelo intactos: {'OK' if intacto else 'FALLA'}")
         ok = all(resultados.values()) and intacto

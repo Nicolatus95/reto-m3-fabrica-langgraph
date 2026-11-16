@@ -113,6 +113,15 @@ despliegue ocupa los puertos 8000 y 8080, y el commit base define lo que revisa 
 paralelo mezclarían cambios, tumbarían el despliegue de la otra y harían que el revisor juzgara código ajeno. Por eso
 las historias que pasan el filtro se construyen de una en una.
 
+### Memoria de decisiones (`Store`)
+Las respuestas de la persona (texto libre en las preguntas abiertas y los comentarios al rechazar un plan) se guardan en
+un Store de LangGraph (`salida/memoria.sqlite`, namespace `("decisiones",)`) y el nodo `precedentes` entrega a las
+historias siguientes un `salida/HU-xx/precedentes.md` con las 10 decisiones más recientes de OTRAS historias (máx. 4000
+caracteres). Por qué Store y no un archivo en `contexto/`: el código selecciona, acota y sanea lo que el agente ve, y
+ningún agente escribe la memoria ni puede leer la base (`hooks/rol.py` bloquea `salida/*.sqlite`); un archivo en
+contexto lo leerían y podrían editar los agentes sin filtro. En las preguntas abiertas se responde `si`, `no` (o vacío:
+detiene) o un texto con las respuestas. `--memoria` lista el contenido sin modificarlo.
+
 ### Los skills de Claude Code (un paso a la vez)
 
 Dentro de una sesión de `claude` en esta carpeta:
@@ -250,12 +259,3 @@ Labs: **4A** El ataque (¿qué capa lo detuvo primero? desactiva solo el filtro 
 prueba para que espere un código equivocado: ¿a quién manda y con qué criterio?). **4C** Auditoría (con la auditoría de
 `registros/`, desde tu terminal: ¿qué agente usó más herramientas?). **4D** Tu defensa (agrega una regla a
 `hooks/seguridad.py` y pruébala sin modelo con un JSON).
-
-## Memoria de decisiones (Fase 5)
-Las respuestas de la persona (texto libre en las preguntas abiertas y los comentarios al rechazar un plan) se guardan en
-un Store de LangGraph (`salida/memoria.sqlite`, namespace `("decisiones",)`) y el nodo `precedentes` entrega a las
-historias siguientes un `salida/HU-xx/precedentes.md` con las 10 decisiones más recientes de OTRAS historias (máx. 4000
-caracteres). Por qué Store y no un archivo en `contexto/`: el código selecciona, acota y sanea lo que el agente ve, y
-ningún agente escribe la memoria ni puede leer la base (`hooks/rol.py` bloquea `salida/*.sqlite`); un archivo en
-contexto lo leerían y podrían editar los agentes sin filtro. En las preguntas abiertas se responde `si`, `no` (o vacío:
-detiene) o un texto con las respuestas. `--memoria` lista el contenido sin modificarlo.

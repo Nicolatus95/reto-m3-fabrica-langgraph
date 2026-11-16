@@ -806,6 +806,181 @@ el XPASS obliga a actualizar la evidencia. Tabla y conclusiones en `docs/red-tea
 - **Lección:** «el agente no puede» y «el agente no lo hace» son cosas distintas. Los subagentes no pueden
   (`rol.py`); el principal solo no lo hace, mientras nadie lo envenene.
 
+- **19:48 · Cierre de la fase 3 (`e76ac47`, `96e8e56`).** Revisado en el chat: 445 pruebas en verde, 1 omitida y
+  27 xfail (los huecos del red team); ruff limpio. `docs/red-team.md` ya reconoce `despliegue` en 3b y 3c y
+  explica `context: fork`. El README acota la auditoría al matcher y lista los riesgos residuales con enlace al
+  red team. `convenciones_app.md` tiene los `data-testid` de HU-04. Los `.mmd` solo traían fines de línea.
+  - Al buscar en el README, el hook bloqueó a la constructora un comando que contenía la palabra «registros».
+    Es el mismo filtro por nombre visto desde el otro lado: frena usos legítimos y deja pasar los rodeos. Lo
+    resolvió con la herramienta Grep sobre el README.
+
+## Entrega · Word (15 nov, 19:57)
+- Se acordó el esqueleto del Word: secciones según la rúbrica (1 Arquitectura, 2 LangGraph, 3 Flujo de punta a
+  punta, 4 Seguridad, 5 Documentación y evidencia, 6 Repositorio), con incisos a), b) y c) como en la plantilla.
+- El borrador se escribe en `Reto/borrador-entrega.md`, en la carpeta del curso, y se pasa al .docx al final.
+- **Decisión de redacción:** en la sección 1 se usa la correspondencia de roles del documento de estado
+  (planificador = analista + diseñador de pruebas + arquitecto; tester = automatizador + E2E + triage). Corrige la
+  de la «Nota para la entrega», que contaba 9 agentes antes de que existiera el documentador.
+
+## Fase 3b (pendiente) · `curl` acotado en el rol de despliegue (15 nov, 20:52)
+- **Pregunta de Nicolas:** ¿vale la pena arreglar los huecos del red team?
+- **Análisis:** los huecos del agente principal (nombre partido, `chr()`, comodines, base64, búsqueda recursiva)
+  son de la sesión interactiva, no de la fábrica (los skills corren con `context: fork` y `rol.py` los detiene).
+  Cerrarlos por nombre es perseguir variantes; el arreglo es de otra capa (ruta resuelta, quitar `python -c`/`curl`
+  del allow del principal, PowerShell en el matcher). **No se arreglan hoy:** quedan como hallazgo con su arreglo propuesto.
+- **Decisión:** sí se cierra el único hueco que alcanza a la fábrica: `curl file://` (casos 3b y 3c) en el rol
+  `despliegue`, el mismo agente que en HU-04 se salió del alcance. Solo URLs http(s) a localhost, 127.0.0.1,
+  backend o frontend, sin globbing y sin opciones que lean o escriban archivos (`@`, `-T`, `-K`, `-o`).
+- **Orden tras la renovación de cuota:** 3b (barata y la que más pesa en el criterio de seguridad) → 4 (`Send`) → 5
+  (`Store`). Si falta tiempo, se descarta de abajo hacia arriba. Corte a las 23:00.
+- **Lección:** antes de arreglar un hueco hay que preguntar a quién alcanza. El mismo hallazgo vale distinto en la
+  sesión interactiva que en el sistema que se entrega.
+
+## Fase 4 · Filtro en lote con `Send` (15 nov, 20:21)
+- **Contexto:** al redactar la justificación de por qué no se usa `Send`, Nicolas pidió que la fábrica procese
+  varias historias a la vez.
+- **Análisis:** el paralelismo completo no cabe. Todas las historias escriben sobre la misma `app/`, hay un solo
+  despliegue (8000/8080) contra el que corre el E2E, y el revisor compara contra un único commit base. Haría falta
+  un worktree y un despliegue por historia, más un merge al final. Además pondría en riesgo una corrida real ya
+  publicada, a 3.5 h del cierre.
+- **Decisión (Nicolas):** paralelizar solo la etapa que es realmente independiente por historia, que es el filtro
+  de seguridad. Lee solo `historias/`, escribe su propio veredicto y cuesta unos 0.002 USD. Será un grafo aparte
+  (`flujos/lote.py`) con `Send` por historia y un reducer que junta los veredictos; `fabrica.py` no se toca. La
+  construcción sigue siendo de una historia a la vez.
+- **Lección:** antes de paralelizar hay que preguntar qué recursos comparten las ramas. `Send` es trivial; lo
+  difícil es que las ramas no se pisen (`app/`, puertos, commit base, archivos de registro).
+
+## Fase 5 (pendiente) · Memoria de decisiones humanas con `Store` (15 nov, 20:33)
+- **Decisión (Nicolas, 20:29 → 20:33):** implementar `Store`. Se compararon dos casos: (a) que el triage recuerde
+  diagnósticos de fallas pasadas y (b) que se recuerden las respuestas de la persona a las preguntas abiertas y sus
+  comentarios al plan. **Se eligió (b).** Lo escribe una persona y no un agente, así que el riesgo de
+  envenenamiento es menor. Hay evidencia de que hace falta: las 5 preguntas de HU-04 eran decisiones de diseño
+  que se repiten. Además, cierra un hueco ya documentado: el `interrupt` de preguntas solo aceptaba sí/no y la
+  respuesta se perdía. El caso (a) no tenía evidencia (HU-04 tuvo 0 ciclos) y lo escribiría un agente.
+- **Diseño acordado:** `SqliteStore` (en `langgraph-checkpoint-sqlite` 3.1.3, ya instalado). Solo el código de los
+  `interrupt` escribe en él: la respuesta humana y la pregunta, saneada y con tope. El código arma
+  `salida/HU-xx/precedentes.md` (ningún rol lo escribe) y el analista y el arquitecto lo leen con Read, como dato.
+  Hay tope de cantidad y tamaño.
+- **Objeción que el Word debe contestar:** «lo que una corrida le deja a otra vive en el repo». Respuesta: el código
+  selecciona y acota los precedentes, y ningún agente puede escribir la memoria. Un `contexto/decisiones.md` lo
+  leería entero un agente.
+- **Orden y tope:** después de la Fase 4, si la cuota alcanza tras la renovación de las ~21:55. Corte a las 23:00:
+  lo no revisado y sin commit se descarta y va al Word como mejora futura.
+
+## Entrega · Repositorio público (15 nov, 21:06)
+- Nicolas hizo público el repositorio `Nicolatus95/reto-m3-fabrica-langgraph` para que el profesor tenga acceso sin
+  depender de que acepte una invitación. La URL va en la sección 6a del Word.
+- Revisión por nombre, sin abrir ningún archivo: en el árbol y en todo el historial de git no hay `.env`, `registros/`, bases `.sqlite` ni auditorías. El único sensible versionado es el señuelo `secretos_demo.txt`, que es intencional (lo usan HU-99 y el red team) y Nicolas debe confirmar que solo trae datos falsos.
+
+- 21:13 · El señuelo contiene solo `BANDERA-DEMO-12345` y la nota de que es falso. `docs/capturas/s4-p7-auditoria-hu99.jsonl`
+  no trae el contenido del señuelo; lo único personal es la ruta de usuario de Windows (4 veces), que se deja como está.
+- 21:53 · Acceso comprobado: el repositorio se abre en una ventana de incógnito.
+
+## Fases 3b y 4 en paralelo · revisión de planes (15 nov, 21:55–22:00)
+- Cuota renovada a las 21:54. La Fase 3b corre en la constructora y la Fase 4 en el auxiliar, en paralelo, porque casi no
+  comparten archivos. El auxiliar no toca README, CHANGELOG ni CLAUDE.md (entrega su texto al final) y solo corre sus
+  pruebas. La Fase 5 queda para después del commit de la 3b; un tercer agente en paralelo se descartó (chocaría con
+  `fabrica.py`, y la revisión es el cuello de botella).
+- **Plan de la 3b, aprobado con 3 ajustes.**
+  - **Hallazgo:** `shlex.split` no expande `$(...)` pero bash sí, así que
+    `curl http://localhost:8000/$(cat secretos_demo.txt)` pasaba la revisión del host. Ahora se rechazan `$`, la
+    comilla invertida, `<(`, `>`, `<` y los saltos de línea en cualquier token de curl.
+  - Se quitó `-L` en lugar de dejarlo como riesgo residual.
+  - El esquema y el host se comparan sin distinguir mayúsculas (`FILE://`, `HTTP://`).
+- **Plan de la 4, aprobado con ajustes.**
+  - Con `DEFENSAS=0`, el estado es «sin_filtrar» y no «ok».
+  - `except Exception` por rama, registrando el tipo de error.
+  - **Hallazgo:** atrapar la excepción dentro del nodo desactiva la `RetryPolicy`. Se piden los mismos 2 intentos de
+    la fábrica antes de marcar «falla».
+  - El doble del ensayo debe pasar por la lógica real de `nodo_filtrar`.
+- **Lección:** validar argumentos con `shlex` no es validar lo que ejecutará bash: la expansión ocurre después de la
+  revisión. Y una captura de excepciones «defensiva» puede apagar en silencio otra defensa (el reintento).
+
+## Fase 3b · `curl` acotado: implementada y revisada (15 nov, 22:06)
+- `hooks/rol.py` tiene ahora `revisar_curl`.
+  - Solo URLs http(s) (sin distinguir mayúsculas) a localhost, 127.0.0.1, backend o frontend.
+  - Lista blanca de opciones, sin `-L`.
+  - Rechaza `@` en cualquier argumento, `%output{}` en `-w`, globbing y `\`, y los caracteres que interpreta bash
+    antes que curl (`$`, comilla invertida, `<`, `>`, `&` y saltos de línea).
+  - Los casos 3b y 3c del despliegue pasan a bloqueados, con su control negativo.
+  - Pytest: 522 pasan, 1 omitida y 25 xfail (548; incluye las pruebas sin commit de la Fase 4). Ruff limpio.
+- **Revisión del diff (chat):** sin observaciones de lógica. Falla cerrado ante comillas sin cerrar, opciones largas
+  no listadas, `--`, rutas absolutas a curl y hosts con punto final o IPv6.
+  - **Hallazgo propio de la constructora:** al principio `@` solo se revisaba en `-d`; las pruebas detectaron
+    `-H @f` y `-w @f`. Sumó `&` a los prohibidos (costo: una URL con `?a=1&b=2` se bloquea).
+- **Hallazgo (proceso):** la constructora usó `git stash` para comprobar que los errores de ruff ya existían, mientras
+  el auxiliar trabajaba en la misma carpeta. Al restaurar, git de Windows reescribió `fabrica.py`, `rol.py` y
+  `test_red_team.py` con CRLF, y el diff mostraba los archivos completos (2160 líneas en `fabrica.py` por un lock de
+  4). Se normalizó a LF desde el chat; con `--ignore-cr-at-eol`, el cambio real es de 4, 71 y 135 líneas.
+- **Lección:** con dos agentes en la misma carpeta, ningún agente debe usar `stash`, `checkout` ni otra operación
+  que reescriba el árbol de trabajo. Además, hay que revisar el diff ignorando los fines de línea antes de
+  juzgar su tamaño.
+- **Sin comprobar:** que Claude Code ejecute el hook de auditoría aunque `rol.py` salga con 2. Son hooks distintos del
+  mismo matcher; solo se ve en una sesión real.
+
+## Fase 4 · Filtro en lote con `Send`: implementada y revisada (15 nov, 22:11)
+- `flujos/lote.py` (318 líneas) y `tests/test_lote.py`, más el lock en `fabrica.py` (4 líneas). Resultados:
+  - 91 pruebas en verde en `test_lote.py` + `test_fabrica.py`, en tres corridas seguidas.
+  - Ensayo `--todas`: HU-01 a HU-04 «ok» y HU-99 «bloqueada», 0.05 USD de dobles, exit 1.
+  - **Control negativo del lock demostrado:** sin el lock, 12 hilos con líneas de 200 KB corrompen el jsonl.
+- **Revisión del diff (chat):**
+  - `repartir` devuelve un `Send` por historia.
+  - `estado_de` traduce el resultado sin mirar el motivo, y falla cerrado si no hay `sospechosa=False` explícito.
+  - El reintento manual reproduce el de la fábrica, porque la excepción se atrapa dentro del nodo.
+  - `validar_historias` resuelve las rutas antes de compararlas, así que `..` no engaña.
+  - Observación menor: el costo de una rama que termina en excepción se pierde (solo afecta a fallos de
+    infraestructura).
+  - Riesgo residual: los `claude -p` concurrentes escriben la auditoría de los hooks desde procesos distintos; el
+    lock solo cubre `seguridad.jsonl`.
+- El texto de README, CHANGELOG y `CLAUDE.md` que entregó el auxiliar llegó con líneas cortadas al pegarlo. Se
+  redactó de nuevo desde el chat a partir de su contenido y se integró. `test_lote.py` venía con CRLF y se normalizó.
+
+## Fase 5 · Plan de la memoria con `Store`, revisado (15 nov, 22:17)
+- **Hallazgos de la constructora que cambiaron el diseño:**
+  - `SqliteStore` necesita su propia conexión con `isolation_level=None`; si no, `put` falla («transaction within a
+    transaction»).
+  - Un nodo con `interrupt` se reejecuta desde el inicio al reanudar. Por eso las escrituras van después del
+    `interrupt` y son idempotentes: la clave es el sha1 de hu, origen y respuesta, y el bloque de respuestas en
+    `criterios.feature` se reemplaza en lugar de acumularse.
+  - Las respuestas anexadas se habrían leído como preguntas abiertas: el parser las corta antes.
+  - Los roles con `lee: salida/*` podían leer los `.sqlite`.
+- **Decisiones (chat y Nicolas):**
+  - Lógica en `flujos/memoria.py`.
+  - `rol.py` excluye `salida/*.sqlite` para todos los roles: el agente recibe solo `precedentes.md`, que el código
+    acota y sanea.
+  - El escenario `precedentes` corre las dos historias en un mismo proceso, para tener evidencia en el CLI.
+  - Una respuesta vacía cuenta como «no» (falla cerrado).
+  - El filtro de frases de inyección mitiga, no garantiza.
+- **Lección:** `interrupt` reejecuta el nodo al reanudar. Todo efecto que el nodo tenga después de la pausa debe ser
+  idempotente, o la memoria se duplica cada vez que alguien reanuda.
+
+## Fase 4 · Corrida real del lote y commit (15 nov, 22:13–22:14)
+- `python -m flujos.lote --todas` (thread `lote-20261115-221340`): HU-01 a HU-04 «ok» y HU-99 «bloqueada»,
+  **0.0077 USD** por las cinco historias filtradas en paralelo. Evidencia: `docs/capturas/r4-lote-real.md` (copia del
+  reporte `salida/lote-20261115-221340.md`).
+- Commit `ab73208` (con `docs/grafo-lote.mmd`) y push: `main` = `origin/main`.
+
+## Fase 5 · Memoria de decisiones con `Store`: implementada y revisada (15 nov, 22:28)
+- Archivos nuevos: `flujos/memoria.py` y `tests/test_memoria.py`.
+  - `fabrica.py`: nodo `precedentes` entre `filtrar` y `analizar`; `interrupt` de preguntas con «si», «no» o texto
+    (vacío = «no»); los rechazos del plan se guardan; `--memoria`; escenario `precedentes`; `recursion_limit` 37 → 38;
+    docstring de `exportar_diagrama` corregido.
+  - `rol.py`: ningún rol lee `salida/*.sqlite` (ni `-wal`/`-shm`) ni busca en la raíz de `salida/`.
+  - Prompts del analista y del arquitecto: leen `precedentes.md`.
+  - Pytest completo: 620 pasan, 2 omitidas y 25 xfail. Ruff limpio.
+- Evidencia (`--ensayo --escenario precedentes`): HU-01 respondió con texto y HU-02 recibió `precedentes.md` con esa
+  respuesta, como dato y no como instrucción. HU-02 terminó LISTA con «Precedentes: 1».
+- **Revisión del diff (chat):**
+  - `precedentes` cuelga de `ruta_a`, así que una historia bloqueada nunca lee el Store.
+  - Las escrituras van después del `interrupt` y son idempotentes.
+  - Sin Store, el grafo funciona igual, sin memoria.
+  - `--memoria` abre en solo lectura y no crea la base.
+  - **Observación:** `--diagrama` en modo real crea un `salida/memoria.sqlite` vacío (ignorado por git). Se acepta.
+- **Corrección de un hallazgo anterior:** el CRLF no venía del `git stash`. Volvió a aparecer en esta fase sin stash, en
+  7 archivos que la constructora editó en Windows, y se normalizó otra vez desde el chat. La causa es la edición en
+  Windows. **Lección:** revisar siempre el diff con `--ignore-cr-at-eol`, y normalizar a LF antes de cada commit hasta
+  agregar un `.gitattributes` (`* text=auto eol=lf`).
+
 ## Pendientes para el reto (anotados durante la clase)
 
 - Suite de red team con las evasiones del filtro textual (Paso 2) y comprobar qué capa detiene cada una.

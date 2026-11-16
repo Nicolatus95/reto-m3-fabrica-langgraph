@@ -1,0 +1,28 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	triage(triage)
+	corregir_codigo(corregir_codigo)
+	corregir_pruebas(corregir_pruebas)
+	corregir_despliegue(corregir_despliegue)
+	e2e(e2e)
+	__end__([<p>__end__</p>]):::last
+	__start__ -.-> corregir_codigo;
+	__start__ -.-> triage;
+	corregir_codigo -.-> __end__;
+	corregir_codigo -.-> e2e;
+	corregir_despliegue --> e2e;
+	corregir_pruebas --> e2e;
+	e2e -.-> __end__;
+	e2e -.-> triage;
+	triage -.-> __end__;
+	triage -.-> corregir_codigo;
+	triage -.-> corregir_despliegue;
+	triage -.-> corregir_pruebas;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

@@ -29,6 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, TypedDict
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
@@ -413,7 +414,7 @@ def nodo_triage(sv: Servicios, s: Estado) -> Command:
     ruta = sv.salida / hu / "diagnostico.json"
     problemas, costo = producir_artefacto(sv, ruta, f"/triage {hu}", "triage")
     if problemas:
-        return Command(update=falla("Triage", problemas, costo), goto="reporte")
+        return Command(update=falla("Triage", problemas, costo), goto=END)   # termina el subgrafo; el principal va a reporte
     d = Diagnostico.model_validate_json(ruta.read_text(encoding="utf-8"))
     destino = {"desarrollador": "corregir_codigo", "automatizador": "corregir_pruebas",
                "despliegue": "corregir_despliegue"}[d.responsable]
@@ -557,17 +558,17 @@ def tras_construir(s: Estado) -> list[str] | str:
 
 
 def tras_e2e(s: Estado) -> str:
-    """e2e OK → revisar; falla con ciclos disponibles → triage; sin ciclos → reporte."""
+    """e2e OK → revisar; falla → el subgrafo de corrección (que escala solo cuando se agotan los ciclos)."""
     if s.get("estado_final"):
         return "reporte"
-    return "revisar" if s.get("e2e_ok") else "triage"
+    return "revisar" if s.get("e2e_ok") else "correccion"
 
 
 def tras_revisar(s: Estado) -> str:
-    """Estado final → reporte; revisión aprobada → documentar; rechazada con ciclo disponible → corregir el código."""
+    """Estado final → reporte; revisión aprobada → documentar; rechazada → el subgrafo de corrección (entra por corregir_codigo)."""
     if s.get("estado_final"):
         return "reporte"
-    return "documentar" if s.get("revision_ok") else "corregir_codigo"
+    return "documentar" if s.get("revision_ok") else "correccion"
 
 
 # --- Grafo -------------------------------------------------------------------------------------------
@@ -584,6 +585,58 @@ def politica_de_reintento(espera: float = ESPERA_REINTENTO) -> RetryPolicy:
     return RetryPolicy(max_attempts=2, initial_interval=espera, retry_on=ErrorInfraestructura)
 
 
+def entrada_de_correccion(s: Estado) -> str:
+    """Por dónde entra el subgrafo: con e2e fallando, por el triage; tras un rechazo del revisor (e2e ya pasó), por corregir_codigo."""
+    return "corregir_codigo" if s.get("e2e_ok") else "triage"
+
+
+def tras_corregir_codigo(s: Estado) -> str:
+    """Dentro del subgrafo: si la corrección ya fijó el estado final (app rota, sin cambios…) sale; si no, vuelve a e2e."""
+    return END if s.get("estado_final") else "e2e"
+
+
+def tras_e2e_en_correccion(s: Estado) -> str:
+    """Dentro del subgrafo: estado final o e2e OK → sale; si sigue fallando → otro triage (los topes los pone nodo_e2e)."""
+    return END if s.get("estado_final") or s.get("e2e_ok") else "triage"
+
+
+def construir_subgrafo_correccion(sv: Servicios, reintento: RetryPolicy) -> CompiledStateGraph:
+    """El ciclo de corrección como subgrafo: triage → corregir_codigo / corregir_pruebas / corregir_despliegue → e2e.
+
+    Mismo Estado y mismos topes que el grafo principal (MAX_CICLOS lo aplica nodo_e2e; el triage cuenta los ciclos).
+    Sale por END: el principal decide después (reporte si hay estado final, revisar si no). Se compila SIN checkpointer:
+    hereda el del principal.
+    """
+    g = StateGraph(Estado)
+    g.add_node("triage", lambda s: nodo_triage(sv, s), retry_policy=reintento,
+               destinations=("corregir_codigo", "corregir_pruebas", "corregir_despliegue", END))
+    g.add_node("corregir_codigo", lambda s: nodo_corregir_codigo(sv, s), retry_policy=reintento)
+    g.add_node("corregir_pruebas", lambda s: nodo_corregir_pruebas(sv, s), retry_policy=reintento)
+    g.add_node("corregir_despliegue", lambda s: nodo_corregir_despliegue(sv, s), retry_policy=reintento)
+    g.add_node("e2e", lambda s: nodo_e2e(sv, s))
+    g.add_conditional_edges(START, entrada_de_correccion, ["triage", "corregir_codigo"])
+    g.add_conditional_edges("corregir_codigo", tras_corregir_codigo, ["e2e", END])   # no sigue a ciegas si falló
+    for correccion in ("corregir_pruebas", "corregir_despliegue"):
+        g.add_edge(correccion, "e2e")                                   # el ciclo: corregir y volver a probar
+    g.add_conditional_edges("e2e", tras_e2e_en_correccion, ["triage", END])
+    return g.compile()
+
+
+ACUMULADOS = {"costo_usd": 0.0, "bitacora": [], "eventos_seguridad": []}      # los campos con reducer de Estado
+
+
+def nodo_correccion(subgrafo: CompiledStateGraph, s: Estado, config: RunnableConfig) -> dict:
+    """Envoltorio del subgrafo de corrección: lo corre y devuelve SOLO lo que cambió.
+
+    Un subgrafo compilado con el mismo Estado, agregado como nodo, devuelve su estado final completo y el principal
+    lo fusiona con los reducers: el costo, la bitácora y los eventos de seguridad se contaban dos veces (comprobado en
+    el ensayo e2e_codigo: 0.18 USD en lugar de 0.10). Por eso el subgrafo arranca con esos campos en blanco, así su
+    salida son exactamente los deltas, y del resto se devuelven solo los campos que cambiaron.
+    """
+    salida = subgrafo.invoke({**s, **{k: type(v)() for k, v in ACUMULADOS.items()}}, config)
+    return {k: v for k, v in salida.items() if k in ACUMULADOS or s.get(k) != v}
+
+
 def construir_grafo(sv: Servicios, checkpointer, espera_reintento: float = ESPERA_REINTENTO) -> CompiledStateGraph:
     """Arma y compila el grafo de la fábrica con los servicios dados y un checkpointer (SqliteSaver)."""
     reintento = politica_de_reintento(espera_reintento)
@@ -591,13 +644,12 @@ def construir_grafo(sv: Servicios, checkpointer, espera_reintento: float = ESPER
     nodos = {"filtrar": nodo_filtrar, "analizar": nodo_analizar, "preguntas": nodo_preguntas,
              "disenar": nodo_disenar, "planificar": nodo_planificar, "aprobar_plan": nodo_aprobar_plan,
              "construir": nodo_construir, "desplegar": nodo_desplegar, "automatizar": nodo_automatizar,
-             "listo": nodo_listo, "e2e": nodo_e2e, "corregir_codigo": nodo_corregir_codigo,
-             "corregir_pruebas": nodo_corregir_pruebas, "corregir_despliegue": nodo_corregir_despliegue,
+             "listo": nodo_listo, "e2e": nodo_e2e,
              "revisar": nodo_revisar, "documentar": nodo_documentar, "reporte": nodo_reporte}
     for nombre, fn in nodos.items():
         g.add_node(nombre, lambda s, fn=fn: fn(sv, s), retry_policy=reintento if nombre in LLAMAN_AL_MODELO else None)
-    g.add_node("triage", lambda s: nodo_triage(sv, s), retry_policy=reintento,
-               destinations=("corregir_codigo", "corregir_pruebas", "corregir_despliegue", "reporte"))
+    subgrafo = construir_subgrafo_correccion(sv, reintento)
+    g.add_node("correccion", lambda s, config: nodo_correccion(subgrafo, s, config))
 
     g.add_edge(START, "filtrar")
     g.add_conditional_edges("filtrar", ruta_a("analizar"), ["analizar", "reporte"])
@@ -609,20 +661,30 @@ def construir_grafo(sv: Servicios, checkpointer, espera_reintento: float = ESPER
     g.add_conditional_edges("construir", tras_construir, ["desplegar", "automatizar", "construir", "reporte"])
     g.add_edge(["desplegar", "automatizar"], "listo")                   # espera a que terminen ambas ramas
     g.add_conditional_edges("listo", ruta_a("e2e"), ["e2e", "reporte"])
-    g.add_conditional_edges("e2e", tras_e2e, ["revisar", "triage", "reporte"])
-    g.add_conditional_edges("corregir_codigo", ruta_a("e2e"), ["e2e", "reporte"])   # no sigue a ciegas si falló
-    for correccion in ("corregir_pruebas", "corregir_despliegue"):
-        g.add_edge(correccion, "e2e")                                   # el ciclo: corregir y volver a probar
-    g.add_conditional_edges("revisar", tras_revisar, ["corregir_codigo", "documentar", "reporte"])
+    g.add_conditional_edges("e2e", tras_e2e, ["revisar", "correccion", "reporte"])
+    g.add_conditional_edges("correccion", ruta_a("revisar"), ["revisar", "reporte"])   # mismas salidas que antes
+    g.add_conditional_edges("revisar", tras_revisar, ["correccion", "documentar", "reporte"])
     g.add_edge("documentar", "reporte")
     g.add_edge("reporte", END)
     return g.compile(checkpointer=checkpointer)
 
 
 def exportar_diagrama(app, ruta: Path = RAIZ / "docs" / "grafo.mmd") -> Path:
-    """Guarda el grafo como Mermaid (get_graph().draw_mermaid()) en docs/grafo.mmd."""
+    """Guarda el grafo como Mermaid (get_graph(xray=True).draw_mermaid()) en docs/grafo.mmd.
+
+    El nodo «correccion» es un envoltorio (una función que invoca al subgrafo), así que xray no muestra su interior:
+    por eso el subgrafo se exporta aparte con exportar_diagrama_correccion.
+    """
     ruta.parent.mkdir(parents=True, exist_ok=True)
-    ruta.write_text(app.get_graph().draw_mermaid(), encoding="utf-8")
+    ruta.write_text(app.get_graph(xray=True).draw_mermaid(), encoding="utf-8")
+    return ruta
+
+
+def exportar_diagrama_correccion(sv: Servicios, ruta: Path = RAIZ / "docs" / "grafo-correccion.mmd") -> Path:
+    """Guarda el subgrafo del ciclo de corrección como Mermaid en docs/grafo-correccion.mmd (evidencia de la entrega)."""
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text(construir_subgrafo_correccion(sv, politica_de_reintento()).get_graph().draw_mermaid(),
+                    encoding="utf-8")
     return ruta
 
 
@@ -642,6 +704,9 @@ def estado_inicial(historia: str, base: str = "") -> Estado:
 def nuevo_thread(hu: str) -> str:
     """thread_id único por corrida (HU-xx-AAAAMMDD-HHMMSS): evita arrastrar contadores de una corrida anterior."""
     return f"{hu}-{datetime.now():%Y%m%d-%H%M%S}"
+
+
+SUBGRAFOS = {"correccion"}      # nodos del principal que envuelven un subgrafo (sus nodos internos salen con prefijo)
 
 
 def linea_de_avance(ns: tuple, nodo: str, actualizacion, costo: float) -> str:
@@ -664,8 +729,8 @@ def avanzar(app, cfg: dict, entrada, emitir: Callable[[str], None]) -> dict | No
             pausa = trozo["__interrupt__"][0].value
             continue
         for nodo, actualizacion in trozo.items():
-            if isinstance(actualizacion, dict):
-                costo += actualizacion.get("costo_usd", 0.0)
+            if isinstance(actualizacion, dict) and not (not ns and nodo in SUBGRAFOS):
+                costo += actualizacion.get("costo_usd", 0.0)     # el nodo-envoltorio ya sumó los de sus nodos internos
             emitir(linea_de_avance(ns, nodo, actualizacion, costo))
     return pausa
 
@@ -975,8 +1040,9 @@ def main(argv: list[str] | None = None) -> int:
     app = construir_grafo(sv, SqliteSaver(conexion), espera_reintento=0.05 if args.ensayo else ESPERA_REINTENTO)
     if not args.ensayo:
         exportar_diagrama(app)
+        exportar_diagrama_correccion(sv)
     if args.diagrama:
-        print(f"Diagrama exportado en {RAIZ / 'docs' / 'grafo.mmd'}")
+        print(f"Diagramas exportados en {RAIZ / 'docs' / 'grafo.mmd'} y {RAIZ / 'docs' / 'grafo-correccion.mmd'}")
         return 0
     responder = responder_si if args.aprobar else responder_en_terminal
     try:

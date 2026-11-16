@@ -44,6 +44,14 @@ cambio
   `salida/HU-xx/documentacion.md`. El código verifica los endpoints contra el OpenAPI de la app desplegada (con el
   diff de respaldo si no responde) y las reglas contra `contexto/reglas_negocio.md`; lo no verificable se marca
   «(no verificado)». Una salida ausente o inválida escala, sin reintentos.
+- Cobertura de LangGraph: la corrida usa **streaming** (`stream_mode="updates"`, una línea por nodo con hora, bitácora y
+  costo acumulado; los interrupt llegan como un trozo más del stream); un **`recursion_limit`** calculado desde los
+  topes (`calcular_recursion_limit()`; al alcanzarlo escala con mensaje, sin traceback); **`--historial THREAD_ID`**
+  (solo lectura, `get_state_history`); **`RetryPolicy`** (2 intentos, ~30 s) únicamente para
+  `ErrorInfraestructura` (`claude -p` sin JSON, sin `claude` o tiempo agotado; un artefacto inválido NO se reintenta);
+  y un **subgrafo** `correccion` (triage → corregir_* → e2e) montado como nodo-envoltorio que devuelve solo los cambios,
+  porque con el mismo Estado los reducers duplicaban costo y bitácora. Su diagrama está en `docs/grafo-correccion.mmd`.
+  No se usan `Send` ni `Store`: no tienen un papel real en este flujo.
 - `--ensayo` y `tests/` prueban las rutas del grafo sin costo (dobles, sin modelo ni Docker).
 - `registros/` es solo para personas y **ningún agente la lee, tampoco el principal**. El bloqueo está en
   `hooks/seguridad.py` (aplica a todos): Read/Glob/Grep sobre `registros/` y cualquier comando de Bash que la

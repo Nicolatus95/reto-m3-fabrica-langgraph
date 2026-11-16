@@ -30,8 +30,11 @@ from flujos.fabrica import (
     commit_base,
     config_de,
     construir_grafo,
+    construir_subgrafo_correccion,
     correr,
     estado_inicial,
+    exportar_diagrama,
+    exportar_diagrama_correccion,
     historial,
     main,
     politica_de_reintento,
@@ -287,12 +290,15 @@ def test_revisor_que_siempre_rechaza_escala_tras_un_ciclo(montar):
 
 
 def test_el_diagrama_incluye_el_ciclo_completo(montar):
-    """El Mermaid trae los nodos clave, y las correcciones salen del triage (Command)."""
-    texto = montar().app.get_graph().draw_mermaid()
-    for nodo in ("filtrar", "triage", "corregir_codigo", "corregir_pruebas", "corregir_despliegue", "revisar",
-                 "reporte"):
+    """El principal trae los nodos clave y el subgrafo «correccion»; el subgrafo trae el triage y las correcciones."""
+    m = montar()
+    texto = m.app.get_graph().draw_mermaid()
+    for nodo in ("filtrar", "correccion", "e2e", "revisar", "documentar", "reporte"):
         assert nodo in texto
-    assert "triage" in texto and "e2e" in texto and "-.->" in texto
+    assert "-.->" in texto
+    sub = construir_subgrafo_correccion(m.ensayo.servicios(), politica_de_reintento()).get_graph().draw_mermaid()
+    for nodo in ("triage", "corregir_codigo", "corregir_pruebas", "corregir_despliegue", "e2e"):
+        assert nodo in sub
 
 
 def test_cli_en_ensayo(monkeypatch, tmp_path, capsys):
@@ -626,11 +632,15 @@ def test_un_artefacto_invalido_no_se_reintenta(montar):
 
 def test_solo_los_nodos_que_llaman_al_modelo_llevan_la_politica(montar):
     m = montar()
-    for nombre in LLAMAN_AL_MODELO | {"triage"}:
-        politica = m.app.nodes[nombre].retry_policy[0]
-        assert politica.max_attempts == 2 and politica.retry_on is ErrorInfraestructura and politica.initial_interval == 0.01
-    for nombre in ("preguntas", "aprobar_plan", "listo", "e2e", "reporte"):
+    sub = construir_subgrafo_correccion(m.ensayo.servicios(), politica_de_reintento(0.01))
+    en_el_subgrafo = {"triage", "corregir_codigo", "corregir_pruebas", "corregir_despliegue"}
+    nodos = [(m.app.nodes[n], n) for n in LLAMAN_AL_MODELO - en_el_subgrafo] + [(sub.nodes[n], n) for n in en_el_subgrafo]
+    for nodo, nombre in nodos:
+        politica = nodo.retry_policy[0]
+        assert politica.max_attempts == 2 and politica.retry_on is ErrorInfraestructura and politica.initial_interval == 0.01, nombre
+    for nombre in ("preguntas", "aprobar_plan", "listo", "e2e", "reporte", "correccion"):
         assert not m.app.nodes[nombre].retry_policy
+    assert not sub.nodes["e2e"].retry_policy
     assert politica_de_reintento().initial_interval == ESPERA_REINTENTO == 30.0
 
 
@@ -640,3 +650,70 @@ def test_cli_con_infraestructura_agotada_sale_con_1_y_reporte(monkeypatch, tmp_p
     captura = capsys.readouterr()
     assert "CORRIDA CORTADA" in captura.err and "Traceback" not in captura.err + captura.out
     assert "sin JSON o tiempo agotado" in (tmp_path / "salida" / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+
+
+# --- Subgrafo de corrección ---------------------------------------------------------------------------------------
+def correr_con_lineas(m, thread: str = "HU-01-prueba"):
+    lineas: list[str] = []
+    v = correr(m.app, config_de(thread), responder_si, estado_inicial(HISTORIA), emitir=lineas.append)
+    return v, lineas
+
+
+def test_el_subgrafo_no_duplica_costo_bitacora_ni_eventos(montar):
+    """Un subgrafo con el mismo Estado fusionaba su salida completa con los reducers: aquí cada cosa cuenta una vez."""
+    m = montar(Escenario(e2e_fallos=1, responsable="desarrollador"))
+    v, _ = correr_con_lineas(m)
+    assert v["estado_final"] == LISTA and v["ciclos"] == 1
+    esperado = 0.01 * (len(m.ensayo.prompts) + 2)                          # cada llamada, más revisor y documentador
+    assert v["costo_usd"] == pytest.approx(esperado)
+    assert len([b for b in v["bitacora"] if b.startswith("Triage")]) == 1
+    assert len([b for b in v["bitacora"] if b.startswith("Código corregido")]) == 1
+    assert [e["evento"] for e in eventos(m)].count("defensas") == 1
+
+
+def test_el_streaming_muestra_los_nodos_internos_y_no_cuenta_el_costo_dos_veces(montar):
+    m = montar(Escenario(e2e_fallos=1, responsable="desarrollador"))
+    v, lineas = correr_con_lineas(m)
+    nodos = [linea.split("  ")[1] for linea in lineas]
+    assert nodos[nodos.index("e2e"):nodos.index("revisar")] == [
+        "e2e", "correccion/triage", "correccion/corregir_codigo", "correccion/e2e", "correccion"]
+    assert float(lineas[-1].split("  ·  ")[-1].split()[0]) == pytest.approx(v["costo_usd"])
+
+
+def test_un_rechazo_del_revisor_entra_al_subgrafo_por_corregir_codigo(montar):
+    m = montar(Escenario(revisor_rechazos=1))
+    v, lineas = correr_con_lineas(m)
+    nodos = [linea.split("  ")[1] for linea in lineas]
+    assert v["estado_final"] == LISTA and v["ciclos"] == 0 and v["revisiones"] == 1
+    assert "correccion/corregir_codigo" in nodos and "correccion/triage" not in nodos
+    assert nodos[nodos.index("correccion"):][:2] == ["correccion", "revisar"] and not prompts_de(m, "/triage")
+
+
+def test_los_topes_del_ciclo_se_conservan_dentro_del_subgrafo(montar):
+    m = montar(Escenario(e2e_fallos=99, responsable="automatizador"))
+    v, lineas = correr_con_lineas(m)
+    assert v["estado_final"] == ESCALAR and v["ciclos"] == 2 and len(prompts_de(m, "/triage")) == 2
+    assert [linea.split("  ")[1] for linea in lineas].count("correccion/e2e") == 2 and not prompts_de(m, "/construir")[1:]
+
+
+def test_el_fallo_del_triage_termina_el_subgrafo_y_va_a_reporte(montar):
+    m = montar(Escenario(e2e_fallos=1, sin_artefacto=frozenset({"/triage"})))
+    v, lineas = correr_con_lineas(m)
+    assert v["estado_final"] == ESCALAR and any("Triage: ESCALAR" in b for b in v["bitacora"])
+    assert [linea.split("  ")[1] for linea in lineas][-2:] == ["correccion", "reporte"] and not prompts_de(m, "/revisar")
+
+
+def test_una_correccion_cortada_por_infraestructura_se_reanuda_en_el_subgrafo(montar):
+    m = montar(Escenario(e2e_fallos=1, responsable="desarrollador", infra_skill="/triage", infra_fallos=2))
+    v, _ = correr_con_lineas(m)
+    assert v["estado_final"] == ESCALAR and "cortada" in v
+    v2 = reanudar(m.app, config_de("HU-01-prueba"), responder_si)
+    assert v2["estado_final"] == LISTA and v2["ciclos"] == 1
+
+
+def test_el_subgrafo_se_exporta_aparte(montar, tmp_path):
+    m = montar()
+    ruta = exportar_diagrama_correccion(m.ensayo.servicios(), tmp_path / "grafo-correccion.mmd")
+    texto = ruta.read_text(encoding="utf-8")
+    assert "triage" in texto and "corregir_codigo" in texto and "e2e" in texto
+    assert "correccion" in exportar_diagrama(m.app, tmp_path / "grafo.mmd").read_text(encoding="utf-8")

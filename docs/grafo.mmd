@@ -16,13 +16,9 @@ graph TD;
 	automatizar(automatizar)
 	listo(listo)
 	e2e(e2e)
-	corregir_codigo(corregir_codigo)
-	corregir_pruebas(corregir_pruebas)
-	corregir_despliegue(corregir_despliegue)
 	revisar(revisar)
 	documentar(documentar)
 	reporte(reporte)
-	triage(triage)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> filtrar;
 	analizar -.-> preguntas;
@@ -34,17 +30,15 @@ graph TD;
 	construir -.-> automatizar;
 	construir -.-> desplegar;
 	construir -.-> reporte;
-	corregir_codigo -.-> e2e;
-	corregir_codigo -.-> reporte;
-	corregir_despliegue --> e2e;
-	corregir_pruebas --> e2e;
+	correccion\3a__end__ -.-> reporte;
+	correccion\3a__end__ -.-> revisar;
 	desplegar --> listo;
 	disenar -.-> planificar;
 	disenar -.-> reporte;
 	documentar --> reporte;
+	e2e -.-> correccion\3a__start__;
 	e2e -.-> reporte;
 	e2e -.-> revisar;
-	e2e -.-> triage;
 	filtrar -.-> analizar;
 	filtrar -.-> reporte;
 	listo -.-> e2e;
@@ -53,15 +47,32 @@ graph TD;
 	planificar -.-> reporte;
 	preguntas -.-> disenar;
 	preguntas -.-> reporte;
-	revisar -.-> corregir_codigo;
+	revisar -.-> correccion\3a__start__;
 	revisar -.-> documentar;
 	revisar -.-> reporte;
-	triage -.-> corregir_codigo;
-	triage -.-> corregir_despliegue;
-	triage -.-> corregir_pruebas;
-	triage -.-> reporte;
 	reporte --> __end__;
 	construir -.-> construir;
+	subgraph correccion
+	correccion\3a__start__(<p>__start__</p>)
+	correccion\3atriage(triage)
+	correccion\3acorregir_codigo(corregir_codigo)
+	correccion\3acorregir_pruebas(corregir_pruebas)
+	correccion\3acorregir_despliegue(corregir_despliegue)
+	correccion\3ae2e(e2e)
+	correccion\3a__end__(<p>__end__</p>)
+	correccion\3a__start__ -.-> correccion\3acorregir_codigo;
+	correccion\3a__start__ -.-> correccion\3atriage;
+	correccion\3acorregir_codigo -.-> correccion\3a__end__;
+	correccion\3acorregir_codigo -.-> correccion\3ae2e;
+	correccion\3acorregir_despliegue --> correccion\3ae2e;
+	correccion\3acorregir_pruebas --> correccion\3ae2e;
+	correccion\3ae2e -.-> correccion\3a__end__;
+	correccion\3ae2e -.-> correccion\3atriage;
+	correccion\3atriage -.-> correccion\3a__end__;
+	correccion\3atriage -.-> correccion\3acorregir_codigo;
+	correccion\3atriage -.-> correccion\3acorregir_despliegue;
+	correccion\3atriage -.-> correccion\3acorregir_pruebas;
+	end
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc

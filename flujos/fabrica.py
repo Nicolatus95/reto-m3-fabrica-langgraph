@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Annotated, TypedDict
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, interrupt
@@ -48,6 +49,33 @@ MAX_RECHAZOS = 2             # el plan se puede rechazar 2 veces; el 3.º rechaz
 MAX_INTENTOS_CONSTRUIR = 2   # la construcción y un reintento con el log
 MAX_CICLOS = 2               # ciclos triage → corrección → e2e
 MAX_CICLOS_REVISION = 1      # fase 2: si el revisor rechaza, un solo ciclo de corrección
+
+def calcular_recursion_limit(margen: int = 10) -> int:
+    """Pasos (supersteps) del peor camino del grafo, derivados de los topes, más un margen.
+
+    Cada nodo terminado es un paso; el límite de LangGraph cuenta pasos, no nodos distintos:
+      6                       filtrar, analizar, preguntas, disenar, planificar, aprobar_plan
+      2 · MAX_RECHAZOS        cada rechazo del plan repite planificar y aprobar_plan
+      MAX_INTENTOS_CONSTRUIR  construir (la construcción y su reintento)
+      3                       desplegar ∥ automatizar (un paso), listo y el primer e2e
+      3 · MAX_CICLOS          cada ciclo de corrección: triage, corregir_*, e2e
+      1 + 3 · MAX_CICLOS_REVISION   revisar, y por cada rechazo: corregir_codigo, e2e, revisar
+      2                       documentar y reporte
+    Con los topes actuales son 27 pasos y con el margen de 10, 37. El margen cubre que el subgrafo de corrección y
+    los reintentos por infraestructura no suman pasos al principal, pero no deben dejar sin holgura a un camino legítimo.
+    """
+    pasos = (6 + 2 * MAX_RECHAZOS + MAX_INTENTOS_CONSTRUIR + 3 + 3 * MAX_CICLOS
+             + 1 + 3 * MAX_CICLOS_REVISION + 2)
+    return pasos + margen
+
+
+RECURSION_LIMIT = calcular_recursion_limit()
+
+
+def config_de(thread_id: str) -> dict:
+    """El config de una corrida: su thread (para reanudar) y el límite de pasos calculado desde los topes."""
+    return {"configurable": {"thread_id": thread_id}, "recursion_limit": RECURSION_LIMIT}
+
 
 # Estados finales posibles (los mismos cuatro que el reporte de /fabrica)
 LISTA = "LISTA"
@@ -622,10 +650,26 @@ def avanzar(app, cfg: dict, entrada, emitir: Callable[[str], None]) -> dict | No
 def correr(app, cfg: dict, responder: Callable[[dict], str], entrada=None,
            emitir: Callable[[str], None] = print) -> dict:
     """Avanza el grafo (con streaming) y atiende cada pausa humana con `responder(pausa) -> texto` y Command(resume=...)."""
-    pausa = avanzar(app, cfg, entrada, emitir)
-    while pausa is not None:
-        pausa = avanzar(app, cfg, Command(resume=responder(pausa)), emitir)
+    try:
+        pausa = avanzar(app, cfg, entrada, emitir)
+        while pausa is not None:
+            pausa = avanzar(app, cfg, Command(resume=responder(pausa)), emitir)
+    except GraphRecursionError:                         # un ciclo que no termina: se escala, sin traceback
+        limite = cfg.get("recursion_limit", RECURSION_LIMIT)
+        return cortar(app, cfg, f"se alcanzó el límite de {limite} pasos del grafo (posible ciclo sin salida)")
     return app.get_state(cfg).values
+
+
+def cortar(app, cfg: dict, motivo: str) -> dict:
+    """Estado de una corrida cortada por un fallo del propio flujo: ESCALAR con un motivo fijo.
+
+    No se guarda en el checkpoint: el thread queda donde estaba y puede reanudarse con --reanudar. La clave `cortada`
+    le avisa a main que debe escribir el reporte (el nodo reporte no llegó a correr).
+    """
+    valores = dict(app.get_state(cfg).values)
+    thread = cfg["configurable"]["thread_id"]
+    return {**valores, "estado_final": ESCALAR, "cortada": f"{motivo}. Para reanudar: --reanudar {thread}",
+            "bitacora": [*valores.get("bitacora", []), f"ESCALAR · {motivo}"]}
 
 
 def reanudar(app, cfg: dict, responder: Callable[[dict], str]) -> dict:
@@ -870,14 +914,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.reanudar:
             thread_id = args.reanudar
             print(f"thread_id: {thread_id}  (reanudando)")
-            valores = reanudar(app, {"configurable": {"thread_id": thread_id}}, responder)
+            valores = reanudar(app, config_de(thread_id), responder)
         elif args.historia:
             entrada = estado_inicial(args.historia, base)
             thread_id = nuevo_thread(entrada["hu"])
             print(f"thread_id: {thread_id}  (para reanudar: --reanudar {thread_id})")
-            valores = correr(app, {"configurable": {"thread_id": thread_id}}, responder, entrada)
+            valores = correr(app, config_de(thread_id), responder, entrada)
         else:
             p.error("indica una historia o --reanudar")
+        if valores.get("cortada"):                      # la corrida no llegó al nodo reporte: se escribe aquí
+            nodo_reporte(sv, valores)
+            print(f"CORRIDA CORTADA: {valores['cortada']}", file=sys.stderr)
     finally:
         conexion.close()
     return resumen(valores, sv, thread_id)

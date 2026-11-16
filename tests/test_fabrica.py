@@ -19,9 +19,12 @@ from flujos.fabrica import (
     ESCALAR,
     LISTA,
     MODELOS,
+    RECURSION_LIMIT,
     Ensayo,
     Escenario,
+    calcular_recursion_limit,
     commit_base,
+    config_de,
     construir_grafo,
     correr,
     estado_inicial,
@@ -482,3 +485,48 @@ def test_reanudar_sigue_imprimiendo_y_parte_del_costo_guardado(montar):
     v = reanudar(m2.app, m2.cfg, guion("si"))
     assert v["estado_final"] == LISTA
     assert v["costo_usd"] > costo_guardado > 0
+
+
+# --- recursion_limit ------------------------------------------------------------------------------------------------
+def test_el_limite_de_recursion_sale_de_los_topes():
+    from flujos import fabrica
+    esperado = (6 + 2 * fabrica.MAX_RECHAZOS + fabrica.MAX_INTENTOS_CONSTRUIR + 3 + 3 * fabrica.MAX_CICLOS
+                + 1 + 3 * fabrica.MAX_CICLOS_REVISION + 2)
+    assert calcular_recursion_limit(margen=0) == esperado and calcular_recursion_limit() == esperado + 10
+    assert RECURSION_LIMIT == 37 and config_de("HU-01-x")["recursion_limit"] == RECURSION_LIMIT
+
+
+@pytest.mark.parametrize("escenario", [
+    Escenario(e2e_fallos=99, responsable="desarrollador"),           # los dos ciclos de corrección y escala
+    Escenario(revisor_rechazos=1),                                    # el ciclo de revisión
+    Escenario(e2e_fallos=1, responsable="desarrollador", revisor_rechazos=1),
+    Escenario(construir_fallos=1),
+])
+def test_los_caminos_largos_caben_en_el_limite(montar, escenario):
+    """El peor camino real termina sin GraphRecursionError y con holgura bajo el límite calculado."""
+    m = montar(escenario)
+    lineas: list[str] = []
+    v = correr(m.app, config_de("HU-01-prueba"), responder_si, estado_inicial(HISTORIA), emitir=lineas.append)
+    assert "cortada" not in v and v["estado_final"] in (LISTA, ESCALAR)
+    assert len(lineas) <= RECURSION_LIMIT - 5
+
+
+def test_un_limite_alcanzado_escala_con_mensaje_y_se_puede_reanudar(montar):
+    m = montar()
+    cfg = {**m.cfg, "recursion_limit": 5}
+    v = correr(m.app, cfg, responder_si, estado_inicial(HISTORIA), emitir=lambda _: None)
+    assert v["estado_final"] == ESCALAR and "límite de 5 pasos" in v["cortada"]
+    assert "--reanudar HU-01-prueba" in v["cortada"] and v["bitacora"][-1].startswith("ESCALAR · se alcanzó")
+    v2 = reanudar(m.app, m.cfg, responder_si)                         # el checkpoint no se perdió
+    assert v2["estado_final"] == LISTA
+
+
+def test_main_con_limite_alcanzado_escribe_el_reporte_y_sale_con_1(monkeypatch, tmp_path, capsys):
+    from flujos import fabrica
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda prefix="": str(tmp_path))
+    monkeypatch.setattr(fabrica, "RECURSION_LIMIT", 4)
+    assert main([HISTORIA, "--ensayo", "--aprobar"]) == 1
+    captura = capsys.readouterr()
+    assert "CORRIDA CORTADA" in captura.err and "Traceback" not in captura.err + captura.out
+    reporte = (tmp_path / "salida" / "HU-01" / "reporte.md").read_text(encoding="utf-8")
+    assert "ESCALAR A UNA PERSONA" in reporte and "se alcanzó el límite de 4 pasos" in reporte

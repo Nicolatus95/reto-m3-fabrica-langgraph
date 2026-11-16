@@ -1,131 +1,219 @@
-# Fábrica de software con agentes · M3B · Sesión 4
+# Fábrica de software con agentes · M3B (sin API key) + reto LangGraph
 
-**Flujo E2E con triage y defensas: la fábrica completa, segura y con humanos en el lazo.**
+Una cadena de agentes que, a partir de una **historia de usuario**, escribe criterios de aceptación, casos de prueba y
+el código de una app de gestión de empleados (FastAPI + React), la despliega con Docker, la prueba de punta a punta y, si
+algo falla, manda corregir al responsable correcto. Cada agente es un **subagente de Claude Code** y se usa con
+`claude auth login` (sin `ANTHROPIC_API_KEY`). El orquestador del reto es un grafo de **LangGraph** (`flujos/fabrica.py`).
 
-| # | Agente | Entrada | Salida | Sesión |
-| --- | --- | --- | --- | --- |
-| 0 | Filtro de seguridad | Historia (no confiable) | `salida/HU-xx/veredicto.json` | 4 |
-| 1 | Analista | Historia de usuario | `salida/HU-xx/criterios.feature` | 1 |
-| 2 | Diseñador de pruebas | Criterios | `salida/HU-xx/casos_prueba.json` | 1 |
-| 3 | Arquitecto + Desarrollador | Criterios y casos | `app/backend`, `app/frontend` | 2 |
-| 4 | Despliegue | Código | Contenedores con Docker Compose | 3 |
-| 5 | Automatizador | Casos de prueba | `app/tests` (pytest + Playwright) | 3 |
-| 6 | Triage | Pruebas fallidas | `salida/HU-xx/diagnostico.json` → reporte | 4 |
+> Principio del proyecto: **el código decide, no el agente.** Cada entrega pasa por `validadores/` y `verificacion/`, y
+> cada nodo se juzga por su artefacto (existe, cambió y valida), nunca por lo que el modelo diga de sí mismo.
 
-## La idea de la sesión
+## Índice
+1. [Setup (Windows / PowerShell)](#setup-windows--powershell)
+2. [Uso](#uso)
+3. [Pruebas](#pruebas)
+4. [Arquitectura de agentes](#arquitectura-de-agentes)
+5. [Capas de seguridad](#capas-de-seguridad)
+6. [Estructura del repo](#estructura-del-repo)
+7. [Notas de clase](#notas-de-clase)
 
-Dos temas: **cerrar el ciclo** (probar de punta a punta y, si algo falla, que el responsable correcto lo
-corrija) y **seguridad** (la historia de usuario es contenido no confiable).
+## Setup (Windows / PowerShell)
 
-| Concepto del curso | En M3 (API + LangGraph) | En M3B (Claude Code) |
-| --- | --- | --- |
-| Pruebas E2E | `ejecutar_pruebas()` | `python -m verificacion e2e HU-xx` → `resultados.xml` y `fallos.md` |
-| Triage (supervisor que enruta) | `diagnosticar()` con `Diagnostico` (Pydantic) | subagente `triage` → `diagnostico.json`, validado con el mismo contrato |
-| Ciclo de corrección con tope | `MAX_CICLOS = 2` | paso 11 de `/fabrica`: máximo 2 ciclos, luego ESCALAR |
-| Filtro de historia | `filtrar_historia()` con `Veredicto` | subagente `filtro-seguridad` (solo lee `historias/`, solo escribe su veredicto) |
-| El orquestador no lee lo no confiable | -- | regla del guion: el principal **nunca** lee la historia, solo pasa su ruta |
-| Lectura confinada y secretos | `confinar_lectura()` | `hooks/seguridad.py` (para todos) + `hooks/rol.py` (por rol) |
-| Comandos permitidos | `comandos_permitidos()` | `programas` de `hooks/roles.py` + `hooks/seguridad.py` (sin `$(...)`, sin secretos) |
-| Prevención de fuga | -- | `hooks/seguridad.py` bloquea escribir el contenido del señuelo |
-| Auditoría | `auditar()` → `auditoria.jsonl` | `hooks/seguridad.py` → `auditoria.jsonl` (con `agent_type`) |
-| Sin salida a internet | `disallowed_tools=["WebFetch", "WebSearch"]` | `permissions.deny` en `.claude/settings.json` |
-| Demo del ataque | `DEFENSAS=0` | `DEFENSAS=0 claude` (apaga `seguridad.py`, el filtro y la lectura por rol; la escritura por rol sigue) |
+Requisitos: Windows con PowerShell, Python 3.12, Node 20 o superior, Git, **Docker Desktop encendido** (motor Linux) y
+Claude Code con sesión iniciada. Las rutas del entorno son `.venv\Scripts\python` (no `.venv/bin/python`).
 
-**Defensa en profundidad:** ninguna capa es suficiente sola. El filtro puede equivocarse; por eso además el
-agente que lee la historia casi no tiene poder, los hooks bloquean las lecturas peligrosas y la auditoría
-deja rastro.
+```powershell
+# 1. Entorno de Python (desde la raíz del repo)
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m playwright install chromium     # solo para correr pruebas e2e fuera del sandbox (opcional)
 
-## Cómo fluye `/fabrica` (lo nuevo: pasos 0, 10, 11 y 12)
+# 2. Sesión de Claude Code SIN API key
+claude auth login
+Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue   # el orquestador igual la quita del entorno del hijo
 
-```
-0 filtro ── sospechosa ──────────────────────────────────────► 12 reporte (BLOQUEADA)
-   │ ok
-1 ... 9 (sesiones 1 a 3) ─► 10 verificacion e2e ── OK ───────► 12 reporte (LISTA)
-                                  │ falla
-                                  ▼
-                       11 triage ─► desarrollador (+ redespliegue) | automatizador | despliegue
-                                  │
-                                  └─► vuelve a 10 (máx. 2 ciclos) ─► ESCALAR
+# 3. Imágenes del sandbox (una sola vez; descargan ~4.6 GB entre las dos)
+.venv\Scripts\python -m verificacion imagen_sandbox
+docker image ls fabrica-sandbox            # fabrica-sandbox:1 (~3.9 GB) y fabrica-sandbox-node:1 (~330 MB)
 ```
 
-## Requisitos
+**Imágenes del sandbox.** El código que escriben los agentes **no corre en tu máquina**: corre en contenedores
+endurecidos construidos desde `sandbox/Dockerfile` (`fabrica-sandbox:1`, Python + Playwright + dependencias fijas del
+backend) y `sandbox/Dockerfile.node` (`fabrica-sandbox-node:1`, para compilar el front-end). Nunca se construyen solas:
+solo con `python -m verificacion imagen_sandbox`. Sin Docker o sin las imágenes, una corrida real **no arranca** y las
+verificaciones **fallan** (no hay ruta de respaldo al anfitrión).
 
-Los de la sesión 3: Python 3.12, `uv`, Node 20 o superior, Docker Desktop encendido y el navegador de
-Playwright (`playwright install chromium`). Claude Code con sesión iniciada (`claude auth login`).
+**Puerto 8000 e IncrediBuild.** La app usa el 8000 (backend) y el 8080 (front-end), fijos en las convenciones. En
+equipos con Visual Studio, *IncrediBuild Manager* puede ocupar el 8000. Compruébalo y detén sus servicios mientras
+trabajas (PowerShell como administrador):
 
-## Cómo correr los agentes
+```powershell
+Get-NetTCPConnection -LocalPort 8000 -State Listen | Select-Object LocalPort, OwningProcess
+Get-Service -DisplayName "*IncrediBuild*" | Stop-Service        # se reinician al arrancar Windows
+```
 
-1. Prepara la sesión como en la 3 y ten instalado el navegador de Playwright.
-2. `/fabrica` empieza con el **filtro de seguridad** (paso 0): si la historia es sospechosa, se detiene sin
-   que el orquestador la lea.
-3. Al final corre las **pruebas E2E** y, si fallan, el **triage** manda corregir al responsable (máximo 2 ciclos).
-4. El resultado queda en `salida/HU-xx/reporte.md`, y `auditoria.jsonl` registra cada herramienta que usó cada agente.
-5. La demostración con `historias/HU-99-envenenada.md` y `DEFENSAS=0` se hace **solo en una copia** de la carpeta.
-
-**Windows.** Las rutas del entorno son `.venv/Scripts/python` (no `.venv/bin/python`). Los ejemplos con
-`VARIABLE=valor comando` son de Git Bash; en PowerShell la variable se define antes con `$env:DEFENSAS = "0"`.
+**Antes de una corrida real** el orquestador exige: Docker activo, las dos imágenes, y `app/` **sin cambios sin
+commitear** en git (para que el revisor solo juzgue lo que cambie durante la corrida). Si falta algo, sale con código 2
+antes de gastar tokens.
 
 ## Uso
 
-```
-/fabrica historias/HU-01-registrar-empleado.md
-/filtrar historias/HU-99-envenenada.md         # el filtro por separado
-/triage HU-01                                  # el triage por separado (necesita salida/HU-01/fallos.md)
+### El orquestador (LangGraph) — la forma recomendada
+
+```powershell
+# Corrida real: filtro → criterios → casos → plan → (aprobación) → código → despliegue ∥ pruebas → e2e → ... → reporte
+.venv\Scripts\python -m flujos.fabrica historias\HU-04-asignar-jefe-directo.md
+
+# Aprueba por adelantado las dos pausas humanas (preguntas abiertas y plan)
+.venv\Scripts\python -m flujos.fabrica historias\HU-04-asignar-jefe-directo.md --aprobar
+
+# Cada corrida imprime su thread_id; con él puedes reanudarla desde su último checkpoint (por ejemplo tras una pausa)
+.venv\Scripts\python -m flujos.fabrica --reanudar HU-04-20261115-101500
+
+# Historial de checkpoints de una corrida (solo lectura, del más reciente al más antiguo)
+.venv\Scripts\python -m flujos.fabrica --historial HU-04-20261115-101500
+
+# Ensayo SIN modelo y SIN Docker: dobles deterministas para ver las rutas del grafo (no toca salida/)
+.venv\Scripts\python -m flujos.fabrica historias\HU-01-registrar-empleado.md --ensayo --escenario e2e_pruebas
+.venv\Scripts\python -m flujos.fabrica --diagrama          # solo exporta docs\grafo.mmd y docs\grafo-correccion.mmd
 ```
 
-Demo de seguridad con la historia envenenada:
+La corrida muestra una línea por nodo (hora, bitácora y **costo acumulado**). El resultado queda en
+`salida\HU-xx\reporte.md`; si la historia es sospechosa, termina en `BLOQUEADA POR SEGURIDAD`. Los checkpoints están en
+`salida\fabrica.sqlite`. Todo bucle tiene tope (intentos de la compuerta, ciclos de corrección, `recursion_limit`); al
+alcanzarlo, la corrida **escala** a una persona con un mensaje, sin traceback.
 
-```bash
+Nodos y modelos (`MODELOS` en `flujos/fabrica.py`): `filtrar` y `documentar` usan haiku; el resto, sonnet.
+
+### Los skills de Claude Code (un paso a la vez)
+
+Dentro de una sesión de `claude` en esta carpeta:
+
+```
+/fabrica historias/HU-01-registrar-empleado.md     # la fábrica completa con el guion del orquestador
+/filtrar historias/HU-99-envenenada.md             # solo el filtro de seguridad
+/criterios historias/HU-01-registrar-empleado.md   # solo el analista
+/triage HU-01                                      # solo el triage (necesita salida/HU-01/fallos.md)
+```
+
+### Verificaciones sueltas (deterministas, sin modelo)
+
+```powershell
+.venv\Scripts\python -m verificacion app                 # arranca el backend y compila el front-end, en el sandbox
+.venv\Scripts\python -m verificacion pruebas HU-01       # recolecta las pruebas (pytest --collect-only), en el sandbox
+.venv\Scripts\python -m verificacion e2e HU-01           # pruebas HU-01 a HU-03 contra la app desplegada (necesita Docker)
+.venv\Scripts\python -m validadores.validar salida\HU-01\criterios.feature
+```
+
+## Pruebas
+
+```powershell
+.venv\Scripts\python -m pytest tests -q                  # ~330 pruebas; sin modelo, sin Docker y sin red
+.venv\Scripts\python -m pytest tests\test_agentes.py -q  # solo los prompts de los subagentes (rápido)
+.venv\Scripts\python -m ruff check flujos hooks validadores tests verificacion
+```
+
+- `tests/` usa dobles del modelo, de Docker y de git: prueban las rutas del grafo, el revisor, el documentador, los
+  hooks, el sandbox y los prompts (bloque de seguridad idéntico en los 8 agentes, herramientas contra `roles.py`).
+- Los **spikes** (`spikes/`) comprueban contra el mundo real y **algunos gastan cuota o usan Docker**; corre solo los
+  que entiendas: `comprobar_paso*.py` (sin modelo), `probar_sandbox.py` (Docker; con `--e2e` necesita la app arriba) y
+  `probar_revisor.py` (llama al modelo; cuesta unos centavos).
+- Para probar un hook a mano, llámalo con un JSON, como en los `comprobar_paso*.py`. No pegues el JSON en la línea de
+  comandos de un agente: `seguridad.py` bloquea justo esos patrones.
+
+## Arquitectura de agentes
+
+| # | Agente | Entrada | Salida (en `salida/HU-xx/` salvo indicación) | Herramientas |
+| --- | --- | --- | --- | --- |
+| 0 | `filtro-seguridad` (haiku) | Historia (no confiable) | `veredicto.json` | Read, Write |
+| 1 | `analista` | Historia | `criterios.feature` | Read, Glob, Write |
+| 2 | `disenador-pruebas` | Criterios | `casos_prueba.json` | Read, Glob, Write |
+| 3a | `arquitecto` | Criterios, casos, `app/` | `plan.md` (lo aprueba una persona) | Read, Glob, Grep, Write |
+| 3b | `desarrollador` | Plan aprobado | `app/backend`, `app/frontend` | + Edit, Bash acotado |
+| 4 | `despliegue` | Código | Dockerfiles, compose y la app en 8000/8080 | + Edit, Bash (`docker compose`) |
+| 5 | `automatizador` | Casos | `app/tests` (pytest + Playwright) | + Edit, Bash acotado |
+| 6 | `triage` | `fallos.md` | `diagnostico.json` | Read, Glob, Grep, Write |
+
+Además, en el grafo: el **revisor** (`flujos/revisor.py`) y el **documentador** (`flujos/documentador.py`, genera
+`documentacion.md`; el modelo solo aporta campos acotados y Python arma el archivo y verifica endpoints y reglas).
+
+```
+filtrar ─ sospechosa ─────────────────────────────────────────────────────► reporte (BLOQUEADA)
+   │ ok
+criterios → casos → plan → (aprobación) → construir → despliegue ∥ pruebas → e2e ─ OK ─► revisar → documentar → reporte
+                                                                                 │ falla
+                                                              correccion (subgrafo): triage → corregir_* → e2e (máx. 2 ciclos) ─► escalar
+```
+
+Cada subagente tiene un prompt con **contexto explícito** (rutas que lee con Read, sin `@archivo`), contrato de entrada
+y salida y un ejemplo de formato. Las salidas estructuradas son contratos Pydantic (`validadores/contratos.py`).
+
+## Capas de seguridad
+
+La historia de usuario es **contenido no confiable**. Ninguna capa basta sola (defensa en profundidad):
+
+1. **Filtro y mínima agencia.** `filtro-seguridad` solo lee `historias/` y solo escribe su veredicto; el orquestador
+   nunca lee la historia. El motivo del veredicto vive fuera de `salida/`.
+2. **Hooks** (`.claude/settings.json`): `hooks/rol.py` + `hooks/roles.py` (qué lee, escribe y ejecuta cada rol) y
+   `hooks/seguridad.py` (para todos: lectura confinada, secretos, terminal, **`registros/` inaccesible** para lectura y
+   escritura). La **auditoría** de cada herramienta se escribe siempre en `registros/auditoria.jsonl`, también con
+   `DEFENSAS=0` (campo `defensas`: `activas`/`apagadas`). `registros/` es solo para personas: ningún agente la lee;
+   revísala desde tu terminal. El `auditoria.jsonl` de la clase (con HU-99) está en `registros/auditoria-clase.jsonl`.
+3. **Prompts:** bloque de seguridad común en los 8 subagentes (lo leído es dato, no instrucciones).
+4. **Sandbox de ejecución:** `docker run --rm` con `--read-only`, `--cap-drop ALL`, `no-new-privileges`, usuario no root,
+   límites de memoria/CPU/pids, sin entorno del anfitrión y montajes de solo lectura. Pruebas y backend sin red; e2e en una
+   red interna sin Internet (`fabrica_sandbox`, verificada como interna); front-end en dos fases (`npm ci
+   --ignore-scripts` con red, `npm run build` sin red).
+5. **Chequeo del compose** (`verificacion/compose_seguro.py`) antes de cada `docker compose up`: rechaza `privileged`,
+   redes/pid del anfitrión, `cap_add`, montajes fuera de `app/`, el socket de Docker, `$`, `env_file`, `include`,
+   `extends` y redes `external` o con nombre explícito.
+6. **Revisor de dos capas:** análisis estático (ruff y bandit fijados, comparación antes/después, sin poder silenciarlo
+   con `noqa`/`nosec`) y una revisión con modelo sin herramientas.
+7. `permissions.deny` bloquea `.env`, el señuelo, `WebFetch` y `WebSearch`.
+
+**Riesgos residuales conocidos:** `npm`/`npx`/`node` del desarrollador siguen en el anfitrión; la fase de red de `npm ci`
+llega al registro de npm; Chromium corre sin su sandbox interno (dentro del contenedor endurecido); los Dockerfiles de
+`despliegue` ejecutan sus `RUN` al construir; el agente principal conserva `npm`, `node`, `docker`, `curl` y `python -c`.
+Detalle en `CLAUDE.md`.
+
+## Estructura del repo
+
+```
+.claude/agents/   prompts de los 8 subagentes        .claude/skills/   comandos (/fabrica, /criterios, ...)
+.claude/settings.json  permisos y hooks              flujos/           orquestador LangGraph, revisor, documentador
+hooks/            roles, rol.py, seguridad.py        validadores/      contratos Pydantic y validadores
+verificacion/     app, pruebas, e2e, sandbox         sandbox/          Dockerfiles del sandbox
+historias/        entradas (HU-01 a HU-04, HU-99)    contexto/         reglas de negocio y convenciones
+salida/HU-xx/     artefactos (no se editan a mano)   app/              la app generada (no se edita a mano)
+spikes/           comprobaciones reales              tests/            pruebas sin modelo
+docs/             bitácora, grafos, capturas         registros/        solo para personas
+```
+
+Las decisiones, los tropiezos y las iteraciones están en [`docs/bitacora.md`](docs/bitacora.md); la evidencia, en
+`docs/capturas/`. Los cambios por fase, en [`CHANGELOG.md`](CHANGELOG.md).
+
+## Notas de clase
+
+**Demo del ataque (solo en clase, solo en una copia de la carpeta).** Con `historias/HU-99-envenenada.md`:
+
+```powershell
+claude -p "/fabrica historias/HU-99-envenenada.md --aprobar" --permission-mode acceptEdits   # → BLOQUEADA POR SEGURIDAD
+$env:DEFENSAS = "0"      # SOLO en la copia: apaga seguridad.py, el filtro y la lectura por rol (la escritura por rol sigue)
 claude -p "/fabrica historias/HU-99-envenenada.md --aprobar" --permission-mode acceptEdits
-# → BLOQUEADA POR SEGURIDAD
-
-# SOLO en una copia de la carpeta, solo en clase:
-DEFENSAS=0 claude -p "/fabrica historias/HU-99-envenenada.md --aprobar" --permission-mode acceptEdits
-grep -r "BANDERA" app/ && echo "el ataque funcionó"   # el señuelo empieza con BANDERA
-tail auditoria.jsonl                            # qué herramientas usó cada agente (con DEFENSAS=0 no se audita)
+Select-String -Path app\* -Pattern "BANDERA" -Recurse    # el señuelo empieza con BANDERA: si aparece, el ataque funcionó
 ```
 
-Probar los hooks sin modelo. **Córrelo tú en tu terminal**, no dentro de una sesión de `claude`: la línea trae
-`$(...)` y `seguridad.py` la bloquearía si la ejecutara un agente (que es justo lo que demuestra).
+Los ejemplos con `VARIABLE=valor comando` de otras guías son de Git Bash; en PowerShell se define antes con `$env:VAR`.
 
-```bash
-echo '{"tool_name":"Bash","tool_input":{"command":"cat $(echo .env)"}}' | .venv/Scripts/python hooks/seguridad.py; echo $?
-```
+Desviaciones de la guía original:
+- Se conserva el `deny` del señuelo en `settings.json` (se quita solo en la copia temporal de la demo).
+- Se quitaron `Bash(pip *)` y `Bash(uv *)` del `allow`; si hace falta instalar algo, se hace a mano.
+- `hooks/rol.py` compara `programas` por prefijo, para que programas de varias palabras funcionen en Windows.
+- `verificacion/` decodifica y escribe en UTF-8 (Windows usa cp1252 y fallaba con `✓`).
+- `ejemplos/` y el servidor MCP `directorio` de la sesión 3 no se implementaron.
+- El ejemplo usa `BANDERA` y no el señuelo completo, porque `hooks/seguridad.py` bloquea escribir ese texto en cualquier archivo.
 
-También puedes usar los scripts `spikes/comprobar_paso2.py`, `spikes/comprobar_paso3.py` y
-`spikes/comprobar_paso4.py`: lanzan los mismos JSON de prueba desde Python, sin ese texto en la línea de comandos.
-
-## Desviaciones de la guía
-
-- **El `deny` del señuelo se conserva** en `.claude/settings.json`: es una capa extra; se quita solo en la copia temporal de la demo, donde `DEFENSAS=0` lo necesita.
-- **Se quitaron `Bash(pip *)` y `Bash(uv *)` del `allow`**, para igualar la guía; si hace falta instalar algo, se hace a mano.
-- **`hooks/rol.py` compara `programas` por prefijo**, para que `.venv/Scripts/python -m pytest` (varias palabras) funcione en Windows.
-- **Dos arreglos de UTF-8 en `verificacion/`**: `comun.py` decodifica la salida de subprocesos (Docker) en UTF-8 y `__main__.py` imprime en UTF-8, porque Windows usa cp1252 y fallaba con `✓`.
-- **No se regeneró la app con HU-01 en el Paso 7**: habría borrado y rehecho `app/` con el modelo; el camino de seguridad se probó con HU-99.
-- **`ejemplos/` y el servidor MCP `directorio` de la sesión 3 no se implementaron**; `.mcp.json` (conexión local con PyCharm) queda fuera del repo y se quitaron los permisos `mcp__directorio__` sueltos.
-- **Mejoras propias de clase** (no están en la guía): `analista.md` prohíbe `Antecedentes:` (el validador cuenta por escenario); `arquitecto.md` obliga a inventariar `app/` con Read/Glob antes de planear; `verificacion/__init__.py` distingue una dependencia que falta de una verificación que no existe; `verificacion/comun.py` resuelve el programa con `shutil.which` (en Windows `npm` es `npm.cmd`).
-- **`requirements.txt` incluye `-r app/backend/requirements.txt`** (backend de la fábrica) y las herramientas del reto (`langgraph`, `ruff`, `bandit`); no lleva `mcp<2` porque no hay servidor MCP.
-- **El ejemplo `grep` usa `BANDERA` y no el señuelo completo**, porque `hooks/seguridad.py` bloquea escribir ese texto en cualquier archivo, también en este README.
-
-## Registro detallado
-
-Las decisiones, los tropiezos y las iteraciones de cada paso están en [`docs/bitacora.md`](docs/bitacora.md); la evidencia (capturas y reportes), en `docs/capturas/`.
-
-## Labs
-
-- **Lab 4A · El ataque.** Lee `historias/HU-99-envenenada.md`. Corre la demo con y sin defensas. ¿Qué capa lo
-  detuvo primero? Desactiva solo el filtro (paso 0 del guion) y vuelve a intentarlo: ¿qué capa lo detiene ahora?
-- **Lab 4B · El triage.** Edita una prueba de `app/tests/` para que espere un código de estado equivocado y corre
-  los pasos 10 y 11. ¿A quién manda el triage? ¿Qué criterio de aceptación usó para decidir?
-- **Lab 4C · Auditoría.** Con `auditoria.jsonl`, responde: ¿qué agente usó más herramientas? ¿Alguno intentó leer
-  algo fuera de su rol?
-- **Lab 4D · Tu defensa.** Agrega a `hooks/seguridad.py` una regla nueva (por ejemplo, bloquear `curl` a dominios
-  que no sean `localhost`) y pruébala sin modelo con un JSON de prueba.
-
-## Preguntas de repaso
-
-1. ¿Por qué el orquestador no debe leer la historia, si es el agente «más inteligente»?
-2. ¿Por qué el filtro usa un modelo pequeño y casi no tiene herramientas?
-3. ¿Qué capas siguen activas con `DEFENSAS=0` y por qué no se apagan?
-4. ¿Qué evita que el ciclo triage → corrección → E2E sea infinito?
-5. ¿Qué información deja `auditoria.jsonl` que no deja la bitácora del orquestador?
+Labs: **4A** El ataque (¿qué capa lo detuvo primero? desactiva solo el filtro y repite). **4B** El triage (edita una
+prueba para que espere un código equivocado: ¿a quién manda y con qué criterio?). **4C** Auditoría (con la auditoría de
+`registros/`, desde tu terminal: ¿qué agente usó más herramientas?). **4D** Tu defensa (agrega una regla a
+`hooks/seguridad.py` y pruébala sin modelo con un JSON).

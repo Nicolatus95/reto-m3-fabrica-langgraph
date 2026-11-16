@@ -692,6 +692,21 @@ Hallazgos:
   corrida de HU-04 trabaja solo la constructora (README y CHANGELOG, que gastan poco). El auxiliar arranca el
   red team cuando termine HU-04, si `/usage` sigue por debajo de ~75 %, o después de las 21:55.
 
+## Fase 3 · Corrida real de HU-04 (thread `HU-04-20261115-191650`)
+
+- 19:16:57 `filtrar`: OK (0.0015 USD). 19:17:14 `analizar`: criterios escritos (0.0579 USD).
+- **Pausa HITL 1 (preguntas abiertas), 19:19.** El analista dejó 5 preguntas: qué se muestra sin jefe; si se
+  asigna o quita el jefe de un empleado dado de baja (cruza con la regla 6); endpoint o acción exacta; si el
+  selector lista solo activos; reasignar el mismo jefe. Captura `r3-pausa-preguntas`.
+  - **Decisión: «si».** Ninguna bloquea: la 2 la resuelve la regla 6 (un empleado de baja no se edita, su jefe
+    tampoco), la 4 la cubre la regla 10 en el backend, y la 1, la 3 y la 5 son decisiones de diseño que el
+    arquitecto toma con `convenciones_app.md`. Si el plan las contradice, se rechaza con comentarios.
+  - **Hallazgo:** la pregunta 2 muestra que el analista cruzó la historia con una regla que la historia no
+    menciona. Es evidencia de que el contexto explícito (`reglas_negocio.md` leído con Read) funciona.
+  - **Lección / mejora:** el `interrupt` de preguntas solo acepta si/no; las respuestas de la persona no
+    vuelven al estado. El único canal para decisiones humanas es el rechazo del plan con comentarios. Mejora
+    para la reflexión: que la pausa acepte respuestas y se agreguen a `criterios.feature`.
+
 ## Pendientes para el reto (anotados durante la clase)
 
 - Suite de red team con las evasiones del filtro textual (Paso 2) y comprobar qué capa detiene cada una.

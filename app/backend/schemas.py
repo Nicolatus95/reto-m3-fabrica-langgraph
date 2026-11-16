@@ -20,9 +20,11 @@ class EmpleadoCrear(BaseModel):
 
 
 class EmpleadoEditar(BaseModel):
-    """Solo puesto y departamento son editables; los campos extra se ignoran."""
-    puesto: Puesto
-    departamento: Departamento
+    """Puesto, departamento y jefe son editables; None en puesto/departamento = sin cambio.
+    jefe_id: se distingue «no enviado» de «null» con model_fields_set."""
+    puesto: Puesto | None = None
+    departamento: Departamento | None = None
+    jefe_id: int | None = None
 
 
 class BajaEntrada(BaseModel):
@@ -42,3 +44,5 @@ class EmpleadoSalida(BaseModel):
     estado: str
     fecha_baja: date | None
     creado_en: datetime
+    jefe_id: int | None = None
+    jefe_nombre: str | None = None

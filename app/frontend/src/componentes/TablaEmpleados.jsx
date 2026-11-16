@@ -13,6 +13,7 @@ export default function TablaEmpleados({ empleados, alEditar, alBaja }) {
             <th>Puesto</th>
             <th>Departamento</th>
             <th>Fecha de ingreso</th>
+            <th>Jefe</th>
             <th>Estado</th>
             <th>Acciones</th>
           </tr>
@@ -26,6 +27,7 @@ export default function TablaEmpleados({ empleados, alEditar, alBaja }) {
               <td>{e.puesto}</td>
               <td>{e.departamento}</td>
               <td>{e.fecha_ingreso}</td>
+              <td data-testid={`jefe-empleado-${e.id}`}>{e.jefe_nombre || ''}</td>
               <td data-testid={`estado-empleado-${e.id}`}>{e.estado === 'baja' ? 'Baja' : 'Activo'}</td>
               <td>
                 <button type="button" data-testid={`editar-empleado-${e.id}`} onClick={() => alEditar && alEditar(e)}>

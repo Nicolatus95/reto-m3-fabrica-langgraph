@@ -3,11 +3,21 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from sqlalchemy import text
+
 import modelos  # noqa: F401  (registra las tablas)
 from database import Base, motor
 from routers import departamentos, empleados
 
 Base.metadata.create_all(motor)
+
+# Migración mínima: create_all no agrega columnas a una tabla ya existente
+with motor.begin() as conexion:
+    columnas = [fila[1] for fila in conexion.execute(text("PRAGMA table_info(empleados)"))]
+    if "jefe_id" not in columnas:
+        conexion.execute(
+            text("ALTER TABLE empleados ADD COLUMN jefe_id INTEGER REFERENCES empleados(id)")
+        )
 
 app = FastAPI(title="Gestión de empleados")
 

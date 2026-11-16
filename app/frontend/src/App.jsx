@@ -10,6 +10,7 @@ import { listarEmpleados, editarEmpleado, darDeBajaEmpleado } from './api.js'
 export default function App() {
   const [departamentos, setDepartamentos] = useState([])
   const [empleados, setEmpleados] = useState([])
+  const [candidatos, setCandidatos] = useState([])
 
   const [editando, setEditando] = useState(null)
   const [dandoBaja, setDandoBaja] = useState(null)
@@ -22,6 +23,7 @@ export default function App() {
   const cargarEmpleados = useCallback(async () => {
     try {
       setEmpleados(await listarEmpleados({ buscar, departamento }))
+      setCandidatos(await listarEmpleados({}))
     } catch {
       // se conserva la lista actual si falla la carga
     }
@@ -95,6 +97,7 @@ export default function App() {
         <FormularioEdicion
           empleado={editando}
           departamentos={departamentos}
+          candidatos={candidatos.filter((c) => c.estado === 'activo')}
           onGuardar={guardarEdicion}
           onCancelar={cancelar}
         />

@@ -4,6 +4,7 @@ Cada prueba fuerza una ruta con un Escenario y comprueba el estado final, los pr
 skills y los archivos que dejó. Los artefactos de los dobles pasan por los validadores de verdad.
 """
 import json
+import re
 import sqlite3
 import tempfile
 from types import SimpleNamespace
@@ -445,3 +446,39 @@ def test_el_modelo_de_documentar_es_haiku():
 def test_el_diagrama_tiene_documentar_entre_revisar_y_reporte(montar):
     texto = montar().app.get_graph().draw_mermaid()
     assert "documentar" in texto
+
+
+# --- Streaming ----------------------------------------------------------------------------------------------------
+def test_el_streaming_imprime_una_linea_por_nodo_con_costo_acumulado(montar):
+    m = montar()
+    lineas: list[str] = []
+    correr(m.app, m.cfg, responder_si, estado_inicial(HISTORIA), emitir=lineas.append)
+    patron = re.compile(r"^\d\d:\d\d:\d\d  (\S+)  ·  (.+)  ·  (\d+\.\d{4}) USD$")
+    partes = [patron.match(linea) for linea in lineas]
+    assert all(partes), lineas
+    nodos = [p.group(1) for p in partes]
+    assert nodos[0] == "filtrar" and nodos[-1] == "reporte" and "documentar" in nodos and "revisar" in nodos
+    costos = [float(p.group(3)) for p in partes]
+    assert costos == sorted(costos) and costos[-1] > 0                      # el costo acumulado nunca baja
+    assert any("Filtro de seguridad: OK" in linea for linea in lineas)
+
+
+def test_el_streaming_atiende_las_pausas_humanas(montar):
+    m = montar()
+    lineas: list[str] = []
+    responder = guion("agrega validación de correo", "si")
+    v = correr(m.app, m.cfg, responder, estado_inicial(HISTORIA), emitir=lineas.append)
+    assert v["estado_final"] == LISTA and len(responder.pausas) == 2
+    assert not any("__interrupt__" in linea for linea in lineas)           # la pausa no se imprime como un nodo
+    assert [linea.split("  ")[1] for linea in lineas].count("planificar") == 2
+
+
+def test_reanudar_sigue_imprimiendo_y_parte_del_costo_guardado(montar):
+    m1 = montar()
+    m1.app.invoke(estado_inicial(HISTORIA), m1.cfg)                        # se corta en la aprobación del plan
+    costo_guardado = m1.app.get_state(m1.cfg).values["costo_usd"]
+    m1.conexion.close()
+    m2 = montar()
+    v = reanudar(m2.app, m2.cfg, guion("si"))
+    assert v["estado_final"] == LISTA
+    assert v["costo_usd"] > costo_guardado > 0

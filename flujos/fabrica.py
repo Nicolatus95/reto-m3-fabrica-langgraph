@@ -593,12 +593,38 @@ def nuevo_thread(hu: str) -> str:
     return f"{hu}-{datetime.now():%Y%m%d-%H%M%S}"
 
 
-def correr(app, cfg: dict, responder: Callable[[dict], str], entrada=None) -> dict:
-    """Avanza el grafo y atiende cada pausa humana con `responder(pausa) -> texto` y Command(resume=...)."""
-    salida = app.invoke(entrada, cfg)
-    while "__interrupt__" in salida:
-        pausa = salida["__interrupt__"][0].value
-        salida = app.invoke(Command(resume=responder(pausa)), cfg)
+def linea_de_avance(ns: tuple, nodo: str, actualizacion, costo: float) -> str:
+    """Una línea por nodo terminado: hora, nodo (con prefijo si es de un subgrafo), su línea de bitácora y el costo."""
+    prefijo = "".join(f"{parte.split(':')[0]}/" for parte in ns)
+    bitacora = actualizacion.get("bitacora") if isinstance(actualizacion, dict) else None
+    return f"{datetime.now():%H:%M:%S}  {prefijo}{nodo}  ·  {bitacora[-1] if bitacora else '-'}  ·  {costo:.4f} USD"
+
+
+def avanzar(app, cfg: dict, entrada, emitir: Callable[[str], None]) -> dict | None:
+    """Corre el grafo con stream_mode="updates" hasta terminar o hasta una pausa humana (devuelve su valor).
+
+    Imprime una línea por cada nodo terminado. El costo acumulado parte del estado guardado (también al reanudar)
+    y suma el costo de cada actualización.
+    """
+    costo = app.get_state(cfg).values.get("costo_usd", 0.0)
+    pausa = None
+    for ns, trozo in app.stream(entrada, cfg, stream_mode="updates", subgraphs=True):
+        if "__interrupt__" in trozo:                    # el interrupt llega como un trozo más del stream
+            pausa = trozo["__interrupt__"][0].value
+            continue
+        for nodo, actualizacion in trozo.items():
+            if isinstance(actualizacion, dict):
+                costo += actualizacion.get("costo_usd", 0.0)
+            emitir(linea_de_avance(ns, nodo, actualizacion, costo))
+    return pausa
+
+
+def correr(app, cfg: dict, responder: Callable[[dict], str], entrada=None,
+           emitir: Callable[[str], None] = print) -> dict:
+    """Avanza el grafo (con streaming) y atiende cada pausa humana con `responder(pausa) -> texto` y Command(resume=...)."""
+    pausa = avanzar(app, cfg, entrada, emitir)
+    while pausa is not None:
+        pausa = avanzar(app, cfg, Command(resume=responder(pausa)), emitir)
     return app.get_state(cfg).values
 
 
@@ -843,6 +869,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.reanudar:
             thread_id = args.reanudar
+            print(f"thread_id: {thread_id}  (reanudando)")
             valores = reanudar(app, {"configurable": {"thread_id": thread_id}}, responder)
         elif args.historia:
             entrada = estado_inicial(args.historia, base)
